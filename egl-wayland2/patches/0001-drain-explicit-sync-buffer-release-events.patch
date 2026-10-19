@@ -1,0 +1,50 @@
+diff --git a/src/wayland/wayland-surface.c b/src/wayland/wayland-surface.c
+index 543ba34..08c70c2 100644
+--- a/src/wayland/wayland-surface.c
++++ b/src/wayland/wayland-surface.c
+@@ -1330,6 +1330,15 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
+     // that we pick up any modifier changes that the server might have sent.
+     wl_display_dispatch_queue_pending(psurf->priv->inst->wdpy, psurf->priv->current.queue);
+ 
++    // wl_buffer.release is still emitted with explicit sync. Those events are
++    // assigned to the swapchain's private queue and must be drained even
++    // though buffer reuse is decided from timeline points.
++    if (wl_display_dispatch_queue_pending(psurf->priv->inst->wdpy,
++                psurf->priv->current.swapchain->queue) < 0)
++    {
++        goto done;
++    }
++
+     // If the window has been resized, then allocate a new swapchain. We'll
+     // switch to it after presenting.
+     if (!SwapChainRealloc(psurf, EGL_TRUE, &new_swapchain))
+diff --git a/src/wayland/wayland-swapchain.c b/src/wayland/wayland-swapchain.c
+index ee6f7b6..66b3beb 100644
+--- a/src/wayland/wayland-swapchain.c
++++ b/src/wayland/wayland-swapchain.c
+@@ -93,6 +93,14 @@ static void on_buffer_release(void *userdata, struct wl_buffer *wbuf)
+ }
+ static const struct wl_buffer_listener BUFFER_LISTENER = { on_buffer_release };
+ 
++static void on_buffer_release_explicit(void *userdata, struct wl_buffer *wbuf)
++{
++    (void) userdata;
++    (void) wbuf;
++}
++static const struct wl_buffer_listener EXPLICIT_BUFFER_LISTENER =
++    { on_buffer_release_explicit };
++
+ typedef struct
+ {
+     struct wl_buffer *buffer;
+@@ -224,6 +232,10 @@ static WlPresentBuffer *SwapChainAppendPresentBuffer(WlDisplayInstance *inst,
+         // open.
+         close(buf->dmabuf);
+         buf->dmabuf = -1;
++
++        // The compositor still sends wl_buffer.release. Give those events a
++        // harmless target so the swapchain queue can drain them.
++        wl_buffer_add_listener(buf->wbuf, &EXPLICIT_BUFFER_LISTENER, swapchain);
+     }
+     else
+     {

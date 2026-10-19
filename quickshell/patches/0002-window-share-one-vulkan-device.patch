@@ -1,0 +1,388 @@
+diff --git a/src/window/CMakeLists.txt b/src/window/CMakeLists.txt
+index 47b546d..275165a 100644
+--- a/src/window/CMakeLists.txt
++++ b/src/window/CMakeLists.txt
+@@ -4,6 +4,7 @@ qt_add_library(quickshell-window STATIC
+ 	panelinterface.cpp
+ 	floatingwindow.cpp
+ 	popupwindow.cpp
++	sharedvkdevice.cpp
+ )
+ 
+ qt_add_qml_module(quickshell-window
+diff --git a/src/window/proxywindow.cpp b/src/window/proxywindow.cpp
+index bc0181c..97a06a1 100644
+--- a/src/window/proxywindow.cpp
++++ b/src/window/proxywindow.cpp
+@@ -31,6 +31,7 @@
+ #include "../core/region.hpp"
+ #include "../core/reload.hpp"
+ #include "../debug/lint.hpp"
++#include "sharedvkdevice.hpp"
+ #include "windowinterface.hpp"
+ 
+ ProxyWindowBase::ProxyWindowBase(QObject* parent)
+@@ -621,6 +622,8 @@ QList<std::function<void(QQuickWindow*)>> SCENEGRAPH_INIT_CALLBACKS; // NOLINT
+ }
+ 
+ QsQuickWindowBase::QsQuickWindowBase(QWindow* parent): QQuickWindow(parent) {
++	qs::window::useSharedVulkanDevice(this);
++
+ 	QObject::connect(
+ 	    this,
+ 	    &QQuickWindow::sceneGraphInitialized,
+diff --git a/src/window/sharedvkdevice.cpp b/src/window/sharedvkdevice.cpp
+new file mode 100644
+index 0000000..6fd8de4
+--- /dev/null
++++ b/src/window/sharedvkdevice.cpp
+@@ -0,0 +1,331 @@
++#include "sharedvkdevice.hpp"
++
++#include <qcoreapplication.h>
++#include <qlogging.h>
++#include <qloggingcategory.h>
++#include <qobject.h>
++#include <qquickgraphicsdevice.h>
++#include <qquickwindow.h>
++#include <qsgrendererinterface.h>
++#include <qtenvironmentvariables.h>
++
++#if QT_CONFIG(vulkan)
++#include <algorithm>
++#include <cstdint>
++#include <vector>
++
++#include <private/qvulkandefaultinstance_p.h>
++#include <qbytearray.h>
++#include <qbytearraylist.h>
++#include <qversionnumber.h>
++#include <qvulkanfunctions.h>
++#include <qvulkaninstance.h>
++#endif
++
++#include "../core/logcat.hpp"
++
++namespace qs::window {
++
++namespace {
++QS_LOGGING_CATEGORY(logSharedVk, "quickshell.window.sharedvk", QtWarningMsg);
++}
++
++#if QT_CONFIG(vulkan)
++
++// Each QQuickWindow normally creates and destroys its own VkDevice. A device costs
++// ~65 MB of host memory on NVIDIA, and destroying one can block for 10+ seconds.
++// Instead, all windows import one device that lives until the application exits,
++// so hiding a window only frees its QRhi. QRhi submits to and waits on its own
++// queue from the window's render thread without locking, so every live window
++// gets a queue nobody else uses. The Vulkan instance must be the one Qt Quick
++// uses, QVulkanDefaultInstance.
++
++namespace {
++
++struct SharedDevice {
++	bool initialized = false;
++	QVulkanInstance* instance = nullptr;
++	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
++	VkDevice device = VK_NULL_HANDLE;
++	uint32_t queueFamily = 0;
++	std::vector<bool> queuesInUse;
++};
++
++SharedDevice& shared() {
++	static SharedDevice device;
++	return device;
++}
++
++void destroySharedDevice() {
++	auto& d = shared();
++	if (d.device == VK_NULL_HANDLE) return;
++
++	auto* df = d.instance->deviceFunctions(d.device);
++	df->vkDeviceWaitIdle(d.device);
++	df->vkDestroyDevice(d.device, nullptr);
++	d.instance->resetDeviceFunctions(d.device);
++	d.device = VK_NULL_HANDLE;
++}
++
++// Mirrors QRhiVulkan::create() so imported devices behave like Qt's own.
++bool createSharedDevice(SharedDevice& d) {
++	d.instance = QVulkanDefaultInstance::instance();
++	if (d.instance == nullptr || d.instance->vkInstance() == VK_NULL_HANDLE) {
++		qCWarning(logSharedVk) << "No Vulkan instance, windows will create their own devices.";
++		return false;
++	}
++
++	auto* f = d.instance->functions();
++
++	uint32_t physicalDeviceCount = 0;
++	f->vkEnumeratePhysicalDevices(d.instance->vkInstance(), &physicalDeviceCount, nullptr);
++	if (physicalDeviceCount == 0) return false;
++	std::vector<VkPhysicalDevice> physicalDevices(physicalDeviceCount);
++	f->vkEnumeratePhysicalDevices(
++	    d.instance->vkInstance(),
++	    &physicalDeviceCount,
++	    physicalDevices.data()
++	);
++
++	uint32_t physicalDeviceIndex = 0;
++	if (qEnvironmentVariableIsSet("QT_VK_PHYSICAL_DEVICE_INDEX")) {
++		auto requested = qEnvironmentVariableIntValue("QT_VK_PHYSICAL_DEVICE_INDEX");
++		if (requested >= 0 && static_cast<uint32_t>(requested) < physicalDeviceCount) {
++			physicalDeviceIndex = static_cast<uint32_t>(requested);
++		}
++	}
++	d.physicalDevice = physicalDevices[physicalDeviceIndex];
++
++	VkPhysicalDeviceProperties properties {};
++	f->vkGetPhysicalDeviceProperties(d.physicalDevice, &properties);
++	auto apiVersion = d.instance->apiVersion();
++	const QVersionNumber deviceApiVersion(
++	    VK_VERSION_MAJOR(properties.apiVersion),
++	    VK_VERSION_MINOR(properties.apiVersion)
++	);
++	if (deviceApiVersion < apiVersion) apiVersion = deviceApiVersion;
++
++	uint32_t familyCount = 0;
++	f->vkGetPhysicalDeviceQueueFamilyProperties(d.physicalDevice, &familyCount, nullptr);
++	std::vector<VkQueueFamilyProperties> families(familyCount);
++	f->vkGetPhysicalDeviceQueueFamilyProperties(d.physicalDevice, &familyCount, families.data());
++
++	bool foundFamily = false;
++	for (uint32_t i = 0; i < familyCount; i++) {
++		const auto flags = families[i].queueFlags;
++		if ((flags & VK_QUEUE_GRAPHICS_BIT) && (flags & VK_QUEUE_COMPUTE_BIT)) {
++			d.queueFamily = i;
++			foundFamily = true;
++			break;
++		}
++	}
++
++	if (!foundFamily) {
++		qCWarning(logSharedVk) << "No graphics+compute queue family, windows will create their own "
++		                          "devices.";
++		return false;
++	}
++
++	// One queue is reserved per live window, so cap the pool at what one shell can
++	// reasonably have open. Windows beyond it fall back to their own device.
++	const auto queueCount = std::min<uint32_t>(families[d.queueFamily].queueCount, 16);
++	const std::vector<float> priorities(queueCount, 0.0f);
++
++	VkDeviceQueueCreateInfo queueInfo {};
++	queueInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
++	queueInfo.queueFamilyIndex = d.queueFamily;
++	queueInfo.queueCount = queueCount;
++	queueInfo.pQueuePriorities = priorities.data();
++
++	uint32_t extensionCount = 0;
++	f->vkEnumerateDeviceExtensionProperties(d.physicalDevice, nullptr, &extensionCount, nullptr);
++	std::vector<VkExtensionProperties> extensionProperties(extensionCount);
++	f->vkEnumerateDeviceExtensionProperties(
++	    d.physicalDevice,
++	    nullptr,
++	    &extensionCount,
++	    extensionProperties.data()
++	);
++
++	auto supported = [&](const QByteArray& name) {
++		for (const auto& ext: extensionProperties) {
++			if (name == ext.extensionName) return true;
++		}
++		return false;
++	};
++
++	const bool hasProperties2 =
++	    d.instance->extensions().contains(QByteArrayLiteral("VK_KHR_get_physical_device_properties2"));
++
++	QByteArrayList wanted = {
++	    "VK_KHR_swapchain",
++	    "VK_KHR_create_renderpass2",
++	    "VK_KHR_depth_stencil_resolve",
++	    "VK_KHR_fragment_shading_rate",
++	    "VK_EXT_device_fault",
++	    // dmabuf import, see ProxyWindowBase::ensureQWindow
++	    "VK_KHR_external_memory_fd",
++	    "VK_EXT_external_memory_dma_buf",
++	    "VK_EXT_image_drm_format_modifier",
++	};
++	if (hasProperties2) {
++		wanted.append("VK_KHR_portability_subset");
++		wanted.append("VK_EXT_vertex_attribute_divisor");
++	}
++	wanted.append(qgetenv("QT_VULKAN_DEVICE_EXTENSIONS").split(';'));
++
++	QByteArrayList enabled;
++	for (const auto& ext: wanted) {
++		if (!ext.isEmpty() && !enabled.contains(ext) && supported(ext)) enabled.append(ext);
++	}
++
++	if (!enabled.contains("VK_KHR_swapchain")) {
++		qCWarning(logSharedVk) << "VK_KHR_swapchain unsupported, windows will create their own "
++		                          "devices.";
++		return false;
++	}
++
++	std::vector<const char*> enabledNames;
++	enabledNames.reserve(enabled.size());
++	for (const auto& ext: enabled) enabledNames.push_back(ext.constData());
++
++	// Enable every supported feature except robustness, like Qt does.
++	VkPhysicalDeviceFeatures2 features {};
++	features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
++	void** chainTail = &features.pNext;
++	auto addToChain = [&](auto* feature) {
++		*chainTail = feature;
++		chainTail = &feature->pNext;
++	};
++
++	VkPhysicalDeviceVulkan11Features features11 {};
++	features11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
++	VkPhysicalDeviceVulkan12Features features12 {};
++	features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
++#ifdef VK_VERSION_1_3
++	VkPhysicalDeviceVulkan13Features features13 {};
++	features13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
++#endif
++#ifdef VK_VERSION_1_4
++	VkPhysicalDeviceVulkan14Features features14 {};
++	features14.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES;
++#endif
++#ifdef VK_KHR_fragment_shading_rate
++	VkPhysicalDeviceFragmentShadingRateFeaturesKHR shadingRateFeatures {};
++	shadingRateFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_FEATURES_KHR;
++#endif
++#ifdef VK_EXT_device_fault
++	VkPhysicalDeviceFaultFeaturesEXT faultFeatures {};
++	faultFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT;
++#endif
++
++	VkDeviceCreateInfo deviceInfo {};
++	deviceInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
++	deviceInfo.queueCreateInfoCount = 1;
++	deviceInfo.pQueueCreateInfos = &queueInfo;
++	deviceInfo.enabledExtensionCount = static_cast<uint32_t>(enabledNames.size());
++	deviceInfo.ppEnabledExtensionNames = enabledNames.data();
++
++	if (apiVersion >= QVersionNumber(1, 2)) {
++		addToChain(&features11);
++		addToChain(&features12);
++#ifdef VK_VERSION_1_3
++		if (apiVersion >= QVersionNumber(1, 3)) addToChain(&features13);
++#endif
++#ifdef VK_VERSION_1_4
++		if (apiVersion >= QVersionNumber(1, 4)) addToChain(&features14);
++#endif
++#ifdef VK_KHR_fragment_shading_rate
++		if (enabled.contains("VK_KHR_fragment_shading_rate")) addToChain(&shadingRateFeatures);
++#endif
++#ifdef VK_EXT_device_fault
++		if (enabled.contains("VK_EXT_device_fault")) addToChain(&faultFeatures);
++#endif
++
++		f->vkGetPhysicalDeviceFeatures2(d.physicalDevice, &features);
++		features.features.robustBufferAccess = VK_FALSE;
++#ifdef VK_VERSION_1_3
++		features13.robustImageAccess = VK_FALSE;
++#endif
++		deviceInfo.pNext = &features;
++	} else {
++		f->vkGetPhysicalDeviceFeatures(d.physicalDevice, &features.features);
++		features.features.robustBufferAccess = VK_FALSE;
++		deviceInfo.pEnabledFeatures = &features.features;
++	}
++
++	auto result = f->vkCreateDevice(d.physicalDevice, &deviceInfo, nullptr, &d.device);
++	if (result != VK_SUCCESS) {
++		qCWarning(logSharedVk) << "vkCreateDevice failed with" << result
++		                       << "- windows will create their own devices.";
++		d.device = VK_NULL_HANDLE;
++		return false;
++	}
++
++	// Resolve device functions now, on the GUI thread, so render threads only read
++	// QVulkanInstance's function table.
++	d.instance->deviceFunctions(d.device);
++	d.queuesInUse.assign(queueCount, false);
++	qAddPostRoutine(&destroySharedDevice);
++
++	qCInfo(logSharedVk) << "Created shared VkDevice" << d.device << "on" << properties.deviceName
++	                    << "with" << queueCount << "queues in family" << d.queueFamily;
++	return true;
++}
++
++class QueueLease: public QObject {
++public:
++	QueueLease(uint32_t queue, QObject* window): QObject(window), queue(queue) {}
++
++	// Children are deleted after ~QQuickWindow, which waits for the render thread
++	// to destroy the window's QRhi, so the queue is idle by now.
++	~QueueLease() override {
++		auto& d = shared();
++		if (this->queue < d.queuesInUse.size()) d.queuesInUse[this->queue] = false;
++	}
++	Q_DISABLE_COPY_MOVE(QueueLease);
++
++private:
++	uint32_t queue;
++};
++
++} // namespace
++
++void useSharedVulkanDevice(QQuickWindow* window) {
++	if (QQuickWindow::graphicsApi() != QSGRendererInterface::Vulkan) return;
++	if (qEnvironmentVariableIsSet("QS_NO_SHARED_VK_DEVICE")) return;
++
++	auto& d = shared();
++	if (!d.initialized) {
++		d.initialized = true;
++		createSharedDevice(d);
++	}
++
++	if (d.device == VK_NULL_HANDLE) return;
++
++	for (uint32_t i = 0; i < d.queuesInUse.size(); i++) {
++		if (d.queuesInUse[i]) continue;
++
++		d.queuesInUse[i] = true;
++		new QueueLease(i, window);
++		window->setGraphicsDevice(QQuickGraphicsDevice::fromDeviceObjects(
++		    d.physicalDevice,
++		    d.device,
++		    static_cast<int>(d.queueFamily),
++		    static_cast<int>(i)
++		));
++		qCDebug(logSharedVk) << "Window" << window << "uses shared queue" << i;
++		return;
++	}
++
++	qCWarning(logSharedVk) << "All" << d.queuesInUse.size() << "shared Vulkan queues are in use;"
++	                       << window << "will create its own device.";
++}
++
++#else
++
++void useSharedVulkanDevice(QQuickWindow* /*window*/) {}
++
++#endif
++
++} // namespace qs::window
+diff --git a/src/window/sharedvkdevice.hpp b/src/window/sharedvkdevice.hpp
+new file mode 100644
+index 0000000..28d4085
+--- /dev/null
++++ b/src/window/sharedvkdevice.hpp
+@@ -0,0 +1,12 @@
++#pragma once
++
++class QQuickWindow;
++
++namespace qs::window {
++
++// Makes the window render through the process-wide VkDevice instead of creating
++// its own. Does nothing unless the scene graph uses Vulkan. Must be called before
++// the window is first exposed.
++void useSharedVulkanDevice(QQuickWindow* window);
++
++} // namespace qs::window

@@ -1,0 +1,216 @@
+diff --git a/src/wayland/hyprland/ipc/connection.cpp b/src/wayland/hyprland/ipc/connection.cpp
+index 45d25da..b453c21 100644
+--- a/src/wayland/hyprland/ipc/connection.cpp
++++ b/src/wayland/hyprland/ipc/connection.cpp
+@@ -68,6 +68,8 @@ HyprlandIpc::HyprlandIpc() {
+ 		return;
+ 	}
+ 
++	this->reconnectTimer.setSingleShot(true);
++
+ 	this->bFocusedWorkspace.setBinding([this]() -> HyprlandWorkspace* {
+ 		if (!this->bFocusedMonitor) return nullptr;
+ 		return this->bFocusedMonitor->bindableActiveWorkspace().value();
+@@ -80,6 +82,7 @@ HyprlandIpc::HyprlandIpc() {
+ 	QObject::connect(&this->eventSocket, &QLocalSocket::errorOccurred, this, &HyprlandIpc::eventSocketError);
+ 	QObject::connect(&this->eventSocket, &QLocalSocket::stateChanged, this, &HyprlandIpc::eventSocketStateChanged);
+ 	QObject::connect(&this->eventSocket, &QLocalSocket::readyRead, this, &HyprlandIpc::eventSocketReady);
++	QObject::connect(&this->reconnectTimer, &QTimer::timeout, this, &HyprlandIpc::reconnectEventSocket);
+ 
+ 	auto *instance = HyprlandToplevelMappingManager::instance();
+ 	QObject::connect(instance, &HyprlandToplevelMappingManager::toplevelAddressed, this, &HyprlandIpc::toplevelAddressed);
+@@ -120,12 +123,43 @@ void HyprlandIpc::eventSocketStateChanged(QLocalSocket::LocalSocketState state)
+ 	if (state == QLocalSocket::ConnectedState) {
+ 		this->eventReader.setDevice(&this->eventSocket);
+ 		qCInfo(logHyprlandIpc) << "Hyprland event socket connected.";
++		this->reconnectDelay = 0;
++
++		if (this->resyncOnConnect) {
++			this->resyncOnConnect = false;
++			this->resync();
++		}
++
+ 		emit this->connected();
+-	} else if (state == QLocalSocket::UnconnectedState && this->valid) {
+-		qCWarning(logHyprlandIpc) << "Hyprland event socket disconnected.";
++	} else if (state == QLocalSocket::UnconnectedState) {
++		if (this->valid) {
++			qCWarning(logHyprlandIpc) << "Hyprland event socket disconnected, reconnecting.";
++		}
++
++		// Events were missed while disconnected (e.g. hyprland drops clients that fall too far
++		// behind), so all state is re-queried once reconnected.
++		this->resyncOnConnect = true;
++		this->reconnectDelay =
++		    this->reconnectDelay == 0 ? 100 : std::min(this->reconnectDelay * 2, 5000);
++		this->reconnectTimer.start(this->reconnectDelay);
+ 	}
+ 
+-	this->valid = state == QLocalSocket::ConnectedState;
++	// A dropped connection passes through ClosingState, which must not clear valid before the
++	// UnconnectedState handler above sees it.
++	if (state != QLocalSocket::ClosingState) this->valid = state == QLocalSocket::ConnectedState;
++}
++
++void HyprlandIpc::reconnectEventSocket() {
++	qCInfo(logHyprlandIpc) << "Reconnecting to hyprland event socket.";
++	this->eventSocket.connectToServer(this->mEventSocketPath, QLocalSocket::ReadOnly);
++}
++
++void HyprlandIpc::resync() {
++	qCInfo(logHyprlandIpc) << "Resyncing hyprland state after reconnect.";
++	this->refreshMonitors(true);
++	this->refreshWorkspaces(true);
++	this->refreshToplevels(true);
++	this->refreshActiveToplevel();
+ }
+ 
+ void HyprlandIpc::eventSocketReady() {
+@@ -510,18 +544,7 @@ void HyprlandIpc::onEvent(HyprlandIpcEvent* event) {
+ 			return;
+ 		}
+ 
+-		auto* toplevel = *toplevelIter;
+-		if (toplevel == this->bActiveToplevel.value()) this->bActiveToplevel = nullptr;
+-		auto index = toplevelIter - mList.begin();
+-		this->mToplevels.removeAt(index);
+-
+-		// Remove from workspace
+-		auto* workspace = toplevel->bindableWorkspace().value();
+-		if (workspace) {
+-			workspace->toplevels()->removeObject(toplevel);
+-		}
+-
+-		delete toplevel;
++		this->destroyToplevel(*toplevelIter);
+ 	} else if (event->name == "movewindowv2") {
+ 		auto args = event->parseView(3);
+ 		auto ok = false;
+@@ -721,18 +744,49 @@ HyprlandToplevel* HyprlandIpc::findToplevelByAddress(quint64 address, bool creat
+ 	return toplevel;
+ }
+ 
+-void HyprlandIpc::refreshToplevels() {
+-	if (this->requestingToplevels) return;
++void HyprlandIpc::destroyToplevel(HyprlandToplevel* toplevel) {
++	if (toplevel == this->bActiveToplevel.value()) this->bActiveToplevel = nullptr;
++	this->mToplevels.removeObject(toplevel);
++
++	if (auto* workspace = toplevel->bindableWorkspace().value()) {
++		workspace->toplevels()->removeObject(toplevel);
++	}
++
++	delete toplevel;
++}
++
++void HyprlandIpc::refreshToplevels(bool removeStale) {
++	if (this->requestingToplevels) {
++		if (removeStale) this->toplevelResyncQueued = true;
++		return;
++	}
++
+ 	this->requestingToplevels = true;
+ 
+-	this->makeRequest("j/clients", [this](bool success, const QByteArray& resp) {
++	// Only toplevels known before the request can be stale. Newer ones may have been created by
++	// events processed before the response.
++	auto known = QVector<quint64>();
++	if (removeStale) {
++		for (auto* toplevel: this->mToplevels.valueList()) {
++			known.push_back(toplevel->address());
++		}
++	}
++
++	this->makeRequest("j/clients", [this, known](bool success, const QByteArray& resp) {
+ 		this->requestingToplevels = false;
++
++		if (this->toplevelResyncQueued) {
++			this->toplevelResyncQueued = false;
++			this->refreshToplevels(true);
++		}
++
+ 		if (!success) return;
+ 
+ 		qCDebug(logHyprlandIpc) << "Parsing j/clients response";
+ 		auto json = QJsonDocument::fromJson(resp).array();
+ 
+ 		const auto& mList = this->mToplevels.valueList();
++		auto addresses = QVector<quint64>();
+ 
+ 		for (auto entry: json) {
+ 			auto object = entry.toObject().toVariantMap();
+@@ -761,7 +815,33 @@ void HyprlandIpc::refreshToplevels() {
+ 
+ 			auto* workspace = toplevel->bindableWorkspace().value();
+ 			if (workspace) workspace->insertToplevel(toplevel);
++
++			addresses.push_back(address);
++		}
++
++		auto removedToplevels = QVector<HyprlandToplevel*>();
++
++		for (auto* toplevel: mList) {
++			if (known.contains(toplevel->address()) && !addresses.contains(toplevel->address())) {
++				removedToplevels.push_back(toplevel);
++			}
+ 		}
++
++		for (auto* toplevel: removedToplevels) {
++			qCDebug(logHyprlandIpc) << "Removing stale toplevel with address" << toplevel->address();
++			this->destroyToplevel(toplevel);
++		}
++	});
++}
++
++void HyprlandIpc::refreshActiveToplevel() {
++	this->makeRequest("j/activewindow", [this](bool success, const QByteArray& resp) {
++		if (!success) return;
++
++		auto object = QJsonDocument::fromJson(resp).object();
++		auto ok = false;
++		auto address = object.value("address").toString().toULongLong(&ok, 16);
++		this->bActiveToplevel = ok ? this->findToplevelByAddress(address, true) : nullptr;
+ 	});
+ }
+ 
+diff --git a/src/wayland/hyprland/ipc/connection.hpp b/src/wayland/hyprland/ipc/connection.hpp
+index c4264e9..cebaf3e 100644
+--- a/src/wayland/hyprland/ipc/connection.hpp
++++ b/src/wayland/hyprland/ipc/connection.hpp
+@@ -9,6 +9,7 @@
+ #include <qobject.h>
+ #include <qproperty.h>
+ #include <qqmlintegration.h>
++#include <qtimer.h>
+ #include <qtmetamacros.h>
+ #include <qtypes.h>
+ 
+@@ -105,7 +106,9 @@ public:
+ 	// canCreate avoids making ghost workspaces when the connection races
+ 	void refreshWorkspaces(bool canCreate);
+ 	void refreshMonitors(bool canCreate);
+-	void refreshToplevels();
++	// removeStale drops toplevels missing from the response which were known before the request
++	void refreshToplevels(bool removeStale = false);
++	void refreshActiveToplevel();
+ 
+ 	// The last argument may contain commas, so the count is required.
+ 	[[nodiscard]] static QVector<QByteArrayView> parseEventArgs(QByteArrayView event, quint16 count);
+@@ -132,10 +135,17 @@ private:
+ 	explicit HyprlandIpc();
+ 
+ 	void onEvent(HyprlandIpcEvent* event);
++	void reconnectEventSocket();
++	void resync();
++	void destroyToplevel(HyprlandToplevel* toplevel);
+ 
+ 	static bool compareWorkspaces(HyprlandWorkspace* a, HyprlandWorkspace* b);
+ 
+ 	QLocalSocket eventSocket;
++	QTimer reconnectTimer;
++	qint32 reconnectDelay = 0;
++	bool resyncOnConnect = false;
++	bool toplevelResyncQueued = false;
+ 	StreamReader eventReader;
+ 	QString mRequestSocketPath;
+ 	QString mEventSocketPath;
