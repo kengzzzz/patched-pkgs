@@ -12,6 +12,9 @@ RUN bash -euo pipefail -c '\
     pacman -Syu --needed --noconfirm "${packages[@]}"'
 RUN useradd --create-home builder && \
     install -d -o builder -g builder /build /artifacts
+RUN sed -i 's/-march=x86-64 -mtune=generic -O2/-march=native -O3/' /etc/makepkg.conf && \
+    grep -q -- '-march=native -O3' /etc/makepkg.conf && \
+    gcc -march=native -Q --help=target | grep -E '^ +-m(arch|tune)='
 
 FROM dependencies AS source
 ARG UPSTREAM_URL

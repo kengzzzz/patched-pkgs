@@ -1,0 +1,110 @@
+diff --git a/src/output/Monitor.cpp b/src/output/Monitor.cpp
+index e69d8dd..3855c98 100644
+--- a/src/output/Monitor.cpp
++++ b/src/output/Monitor.cpp
+@@ -49,6 +49,7 @@
+ #include "../helpers/Drm.hpp"
+ #include "MonitorFrameScheduler.hpp"
+ #include <aquamarine/output/Output.hpp>
++#include <aquamarine/backend/DRM.hpp>
+ #include "debug/log/Logger.hpp"
+ #include "notification/NotificationOverlay.hpp"
+ #include "MonitorFrameScheduler.hpp"
+@@ -2083,6 +2084,14 @@ uint16_t CMonitor::isDSBlocked(bool full) {
+         reasons |= DS_BLOCK_DMA;
+         if (!full)
+             return reasons;
++    } else if (!canScanoutBuffer(PSURFACE->m_current.buffer.m_buffer, params)) {
++        reasons |= DS_BLOCK_DMA;
++        if (!full)
++            return reasons;
++    } else if (m_failedScanout.surface.lock() == PSURFACE && m_failedScanout.format == params.format && m_failedScanout.modifier == params.modifier) {
++        reasons |= DS_BLOCK_FAILED;
++        if (!full)
++            return reasons;
+     }
+ 
+     const bool surfaceIsHDR   = PSURFACE->m_colorManagement.valid() && PSURFACE->m_colorManagement->isHDR();
+@@ -2153,20 +2162,26 @@ bool CMonitor::attemptDirectScanout() {
+     const auto  previousFormat           = m_drmFormat;
+     const auto  previousBuffer           = m_output->state->state().buffer;
+     const auto  previousPresentationMode = m_output->state->state().presentationMode;
++    const bool  FORMAT_CHANGE            = m_drmFormat != params.format;
+     bool        scanoutCommitted         = false;
+-    CScopeGuard rollbackState            = {[this, previousFormat, previousBuffer, previousPresentationMode, &scanoutCommitted]() {
++    CScopeGuard rollbackState            = {[this, previousFormat, previousBuffer, previousPresentationMode, FORMAT_CHANGE, PSURFACE, params, &scanoutCommitted]() {
+         if (scanoutCommitted)
+             return;
+ 
+-        m_drmFormat = previousFormat;
+-        m_output->state->setFormat(previousFormat);
++        // setFormat() always flags a reconfig, i.e. a modeset on the next commit, so only undo a change we made
++        if (FORMAT_CHANGE) {
++            m_drmFormat = previousFormat;
++            m_output->state->setFormat(previousFormat);
++            m_failedScanout = {.surface = PSURFACE, .format = params.format, .modifier = params.modifier};
++        }
++
+         m_output->state->setBuffer(previousBuffer);
+         m_output->state->setPresentationMode(previousPresentationMode);
+         m_output->state->resetExplicitFences();
+     }};
+ 
+-    const bool  NEEDS_TEST = !m_lastScanout || m_drmFormat != params.format; // do not retest while it's active
+-    if (m_drmFormat != params.format) {
++    const bool  NEEDS_TEST = !m_lastScanout || FORMAT_CHANGE; // do not retest while it's active
++    if (FORMAT_CHANGE) {
+         m_output->state->setFormat(params.format);
+         m_drmFormat = params.format;
+     }
+@@ -2250,6 +2265,24 @@ bool CMonitor::canAttemptDirectScanoutFast() const {
+     return !m_solitaryClient.expired() || !m_lastScanout.expired() || m_directScanoutIsActive;
+ }
+ 
++bool CMonitor::canScanoutBuffer(const SP<IHLBuffer>& buffer, const Aquamarine::SDMABUFAttrs& attrs) {
++    if (!m_output)
++        return false;
++
++    // aquamarine already failed to import this one into KMS
++    if (buffer->attachments.has<Aquamarine::CDRMBufferUnimportable>())
++        return false;
++
++    // KMS only takes a format + modifier the primary plane lists (e.g. NVIDIA's Vulkan WSI picks compressed modifiers it doesn't).
++    // Finding that out by attempting costs a swapchain reconfigure and a modeset whenever the format differs from the output's.
++    const auto FORMATS = m_output->getRenderFormats();
++    if (FORMATS.empty())
++        return true; // nothing to check against
++
++    const auto FORMAT = std::ranges::find_if(FORMATS, [&attrs](const auto& f) { return f.drmFormat == attrs.format; });
++    return FORMAT != FORMATS.end() && std::ranges::find(FORMAT->modifiers, attrs.modifier) != FORMAT->modifiers.end();
++}
++
+ bool CMonitor::isMultiGPU() {
+     if (!m_output || !g_pCompositor)
+         return false;
+diff --git a/src/output/Monitor.hpp b/src/output/Monitor.hpp
+index 945fecd..b47af24 100644
+--- a/src/output/Monitor.hpp
++++ b/src/output/Monitor.hpp
+@@ -153,6 +153,13 @@ namespace Monitor {
+         bool m_directScanoutIsActive    = false; // for cleanup logic. m_lastScanout.expired() can become true before the DS cleanup if client crashes/exits while DS is active.
+         bool m_scanoutNeedsCursorUpdate = false;
+ 
++        // last attempt that had to switch the output format and failed. Retrying it every frame modesets every frame (black screen).
++        struct {
++            WP<CWLSurfaceResource> surface;
++            uint32_t               format   = DRM_FORMAT_INVALID;
++            uint64_t               modifier = DRM_FORMAT_MOD_INVALID;
++        } m_failedScanout;
++
+         // for special fade/blur
+         PHLANIMVAR<float> m_specialFade;
+         PHLANIMVAR<float> m_specialDim;
+@@ -286,6 +293,7 @@ namespace Monitor {
+         bool         attemptDirectScanout();
+         void         handleDSleave();
+         bool         canAttemptDirectScanoutFast() const;
++        bool         canScanoutBuffer(const SP<IHLBuffer>& buffer, const Aquamarine::SDMABUFAttrs& attrs);
+         bool         isMultiGPU();
+         void         setCTM(const Mat3x3& ctm);
+         void         onCursorMovedOnMonitor();

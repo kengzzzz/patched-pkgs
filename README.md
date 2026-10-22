@@ -6,7 +6,7 @@ here installs a package or changes the running system.
 
 | Package | Patches |
 | --- | --- |
-| [hyprland](hyprland/README.md) | Direct scanout feedback for Wine subsurfaces |
+| [hyprland](hyprland/README.md) | Direct scanout feedback for Wine subsurfaces, tearing fix |
 | [quickshell](quickshell/README.md) | Shared VkDevice for all windows, event socket reconnect |
 | [egl-wayland2](egl-wayland2/README.md) | `wl_buffer.release` leak with explicit sync |
 
@@ -19,6 +19,8 @@ here installs a package or changes the running system.
   PKGBUILD       builds the cloned tree
   patches/       applied in name order with `git apply --index`
   README.md      what each patch fixes and how to roll back
+  references/    hyprland only: unapplied and original patches
+  diagnostics/   hyprland only: scanout and freeze capture scripts
   dist/          build output, one directory per version (not tracked)
 ```
 
@@ -49,6 +51,15 @@ The output goes to `<package>/dist/<PKGVER>-<PKGREL>/`:
 - `source.txt` with the upstream commit and the patch checksums
 - `build-packages.txt` with the package versions used in the build
 - `.SRCINFO` and `build.log`
+
+## Compiler flags
+
+Each Dockerfile changes the image's `/etc/makepkg.conf` from
+`-march=x86-64 -mtune=generic -O2` to `-march=native -O3`, like CachyOS's
+makepkg.conf. LTO stays on through makepkg's default `lto` option. Docker
+does not hide the CPU, so `native` resolves to the host CPU (`znver5` here).
+The build log shows the resolved `-march` and `-mtune`. The packages only run
+on the CPU family they were built on.
 
 `build.sh` never overwrites an existing version directory. Bump `PKGREL` to
 build again.
