@@ -1,6 +1,6 @@
 # hyprland
 
-Hyprland 0.56.2 with two patches.
+Hyprland 0.56.2 with three patches.
 
 ## 0001: keep scanout dmabuf feedback for subsurfaces
 
@@ -41,6 +41,22 @@ give each game one or the other.
 
 Drop this patch when moving to a release that contains PR #16572.
 
+## 0003: skip direct scanout for buffers KMS can't take
+
+Monster Hunter Wilds presented 10-bit (XB30) buffers with a compressed
+layout that KMS can't import. To try direct scanout, Hyprland switches the
+output from XR24 to XB30, the test commit fails, and the rollback switches it
+back. Each switch is a modeset, so this happened on every frame and the screen
+stayed black.
+
+The patch blocks direct scanout for buffers that aquamarine has already
+marked as unimportable. The rollback also only resets the format when the
+attempt changed it. Each bad buffer now costs one modeset, and Hyprland
+composites the window instead. It changes only `src/output/Monitor.cpp`.
+
+Drop this patch when upstream checks the buffer before changing the output
+format in `CMonitor::attemptDirectScanout`.
+
 ## Validation
 
 Tested on an RTX 5080 with a 3440x1440 240 Hz QD-OLED (DP-3), SDR, VRR off.
@@ -66,10 +82,6 @@ and 0002 with stock Arch flags).
 
 - `references/scanout-feedback-upstream.patch` is the original export of
   0001, with its full commit message.
-- `references/monitor-kms-guard.patch` is a candidate fix that is not
-  applied. It rejects buffers KMS cannot scan out before changing output
-  state, and caches failed format changes. The cache has no reset for retries
-  with the same surface, format and modifier, so review it before use.
 - `diagnostics/record-scanout.py` records a 180 second scanout timeline from
   `hyprctl`. `capture-only.sh` takes a grim screenshot with monitor state
   before and after it. `collect-game-threads.sh` dumps the PoE2 threads with
@@ -87,4 +99,5 @@ and 0002 with stock Arch flags).
 
 ## Rollback
 
-Run `sudo pacman -S hyprland`, then log out and back in.
+Run `sudo pacman -S hyprland`, then log out and back in. To go back to only
+0001 and 0002, install the 4.4 package from `dist/0.56.2-4.4/` instead.

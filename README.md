@@ -6,7 +6,7 @@ here installs a package or changes the running system.
 
 | Package | Patches |
 | --- | --- |
-| [hyprland](hyprland/README.md) | Direct scanout feedback for Wine subsurfaces, tearing fix |
+| [hyprland](hyprland/README.md) | Direct scanout feedback for Wine subsurfaces, tearing fix, guard against a scanout modeset loop |
 | [quickshell](quickshell/README.md) | Shared VkDevice for all windows, event socket reconnect |
 | [egl-wayland2](egl-wayland2/README.md) | `wl_buffer.release` leak with explicit sync |
 
@@ -19,7 +19,7 @@ here installs a package or changes the running system.
   PKGBUILD       builds the cloned tree
   patches/       applied in name order with `git apply --index`
   README.md      what each patch fixes and how to roll back
-  references/    hyprland only: unapplied and original patches
+  references/    hyprland only: original patch export
   diagnostics/   hyprland only: scanout and freeze capture scripts
   dist/          build output, one directory per version (not tracked)
 ```
