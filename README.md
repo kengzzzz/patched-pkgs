@@ -6,7 +6,7 @@ here installs a package or changes the running system.
 
 | Package | Patches |
 | --- | --- |
-| [hyprland](hyprland/README.md) | Direct scanout feedback for Wine subsurfaces, tearing fix, guard against a scanout modeset loop |
+| [hyprland](hyprland/README.md) | Direct scanout feedback for Wine subsurfaces and windows that map fullscreen, tearing fix, guard against a scanout modeset loop |
 | [quickshell](quickshell/README.md) | Shared VkDevice for all windows, event socket reconnect |
 | [egl-wayland2](egl-wayland2/README.md) | `wl_buffer.release` leak with explicit sync |
 

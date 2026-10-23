@@ -1,6 +1,6 @@
 # hyprland
 
-Hyprland 0.56.2 with three patches.
+Hyprland 0.56.2 with four patches.
 
 ## 0001: keep scanout dmabuf feedback for subsurfaces
 
@@ -57,6 +57,25 @@ composites the window instead. It changes only `src/output/Monitor.cpp`.
 Drop this patch when upstream checks the buffer before changing the output
 format in `CMonitor::attemptDirectScanout`.
 
+## 0004: send the scanout tranche to windows that map fullscreen
+
+Hyprland sends the scanout tranche to the window's solitary surface when it
+goes fullscreen. A window that is already fullscreen when it maps, like
+Monster Hunter Wilds, can have no solitary surface at that moment. Hyprland
+then skips the tranche and never sends it later. Without the tranche,
+NVIDIA's Vulkan driver picks a compressed layout that the display plane can't
+scan out, and the game stays composited.
+
+The patch passes the window's toplevel surface instead. 0001 already sends
+the tranche to every feedback object under the toplevel, so windows that had
+a solitary surface behave as before. Leaving fullscreen resets the feedback
+the same way. It changes only
+`src/managers/fullscreen/handler/FullscreenHandler.cpp` and
+`src/layout/algorithm/tiled/scrolling/ScrollingFullscreenHandler.cpp`.
+
+Drop this patch when upstream stops requiring the solitary surface before
+sending the scanout tranche.
+
 ## Validation
 
 Tested on an RTX 5080 with a 3440x1440 240 Hz QD-OLED (DP-3), SDR, VRR off.
@@ -72,6 +91,10 @@ Tested on an RTX 5080 with a 3440x1440 240 Hz QD-OLED (DP-3), SDR, VRR off.
   in-match sample and ran above 240 fps.
 - 2026-10-22, tearing plus direct scanout on one window: 49227 modesets and
   as many rejected async commits in one session. See the 0002 section.
+- 2026-10-23, 0003 and 0004 with `direct_scanout = 2`: Monster Hunter Wilds
+  (Proton, Wine Wayland, XB30) scans out from a cold launch with no import
+  failures. Leaving fullscreen resets the feedback. Each switch between the
+  game and another workspace costs one modeset.
 
 The raw data (thread dumps, scanout timelines), the earlier README log and
 build logs from the old `~/Data/hyprland-scanout` project are in
@@ -99,5 +122,6 @@ and 0002 with stock Arch flags).
 
 ## Rollback
 
-Run `sudo pacman -S hyprland`, then log out and back in. To go back to only
-0001 and 0002, install the 4.4 package from `dist/0.56.2-4.4/` instead.
+Run `sudo pacman -S hyprland`, then log out and back in. To go back to 0001
+to 0003, install the 4.6 package from `dist/0.56.2-4.6/` instead. For only
+0001 and 0002, use `dist/0.56.2-4.4/`.
