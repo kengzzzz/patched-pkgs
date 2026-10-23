@@ -5,6 +5,7 @@ from datetime import datetime
 import json
 from pathlib import Path
 import subprocess
+import sys
 import time
 
 
@@ -16,6 +17,10 @@ def query(*arguments):
     return result.stdout
 
 
+if len(sys.argv) != 2:
+    sys.exit(f"Usage: {sys.argv[0]} <window class>")
+window_class = sys.argv[1]
+
 path = Path(__file__).resolve().parent / (
     "scanout-timeline-" + datetime.now().strftime("%Y%m%d-%H%M%S") + ".jsonl"
 )
@@ -26,13 +31,13 @@ with path.open("w") as output:
         record = {"time": datetime.now().astimezone().isoformat()}
         try:
             record["scanout_setting"] = query("getoption", "render:direct_scanout").strip()
-            record["game"] = [
+            record["windows"] = [
                 {key: client.get(key) for key in (
                     "pid", "address", "fullscreen", "fullscreenClient",
                     "xwayland", "workspace", "size",
                 )}
                 for client in json.loads(query("clients", "-j"))
-                if client.get("class") == "steam_app_2694490"
+                if client.get("class") == window_class
             ]
             record["monitors"] = [
                 {key: monitor.get(key) for key in (

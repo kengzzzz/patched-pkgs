@@ -4,7 +4,7 @@ set -euo pipefail
 diagnostic_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 capture_name="capture-only-$(date +%Y%m%d-%H%M%S)"
 
-printf 'Return to PoE2; capture starts in 5 seconds.\n'
+printf 'Switch to the window to capture. Capture starts in 5 seconds.\n'
 sleep 5
 hyprctl -i 0 getoption render:direct_scanout > "$diagnostic_dir/$capture_name-scanout.txt"
 hyprctl -i 0 monitors -j > "$diagnostic_dir/$capture_name-before.json"

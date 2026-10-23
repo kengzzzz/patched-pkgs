@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+[[ $# -eq 1 ]] || { printf 'Usage: %s <window class>\n' "${0##*/}" >&2; exit 1; }
 diagnostic_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 game_pid=$(hyprctl -i 0 clients -j | python -c '
 import json, sys
-games = [c for c in json.load(sys.stdin) if c.get("mapped") and c.get("class") == "steam_app_2694490"]
+games = [c for c in json.load(sys.stdin) if c.get("mapped") and c.get("class") == sys.argv[1]]
 if len(games) != 1:
-    sys.exit("Expected exactly one running PoE2 window.")
+    sys.exit(f"Expected exactly one mapped window with class {sys.argv[1]}.")
 print(games[0]["pid"])
-')
+' "$1")
 [[ $game_pid =~ ^[1-9][0-9]*$ ]] || exit 1
-snapshot="$diagnostic_dir/poe2-native-threads-$(date +%Y%m%d-%H%M%S).txt"
+snapshot="$diagnostic_dir/game-threads-$(date +%Y%m%d-%H%M%S).txt"
 
-printf 'Collecting PoE2 PID %s; sudo is required by Linux ptrace policy.\n' "$game_pid"
+printf 'Collecting PID %s. Linux ptrace policy requires sudo.\n' "$game_pid"
 snapshot_status=0
 sudo timeout -s INT 20s gdb -nx -nh -batch \
     -iex 'set auto-load off' \

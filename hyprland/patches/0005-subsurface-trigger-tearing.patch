@@ -1,0 +1,63 @@
+diff --git a/src/desktop/view/Subsurface.cpp b/src/desktop/view/Subsurface.cpp
+index c203f04..44841cc 100644
+--- a/src/desktop/view/Subsurface.cpp
++++ b/src/desktop/view/Subsurface.cpp
+@@ -207,6 +207,15 @@ void CSubsurface::onCommit() {
+         m_lastSize     = m_wlSurface->resource()->m_current.size;
+         m_lastPosition = m_subsurface->m_position;
+     }
++
++    // clients like Wine present into a subsurface, so their frames never commit the window's own surface
++    const auto PWINDOW = m_windowParent.lock();
++    if (!PWINDOW)
++        return;
++
++    const auto PMONITOR = PWINDOW->m_monitor.lock();
++    if (PMONITOR && PMONITOR->m_solitaryClient.lock() == PWINDOW && PWINDOW->getSolitaryResource() == m_wlSurface->resource())
++        PWINDOW->checkTearing(m_wlSurface->resource());
+ }
+ 
+ void CSubsurface::onDestroy() {
+diff --git a/src/desktop/view/Window.cpp b/src/desktop/view/Window.cpp
+index e958f13..ba5981b 100644
+--- a/src/desktop/view/Window.cpp
++++ b/src/desktop/view/Window.cpp
+@@ -2750,8 +2750,6 @@ void CWindow::commitWindow() {
+     if (!m_workspace->m_visible)
+         return;
+ 
+-    const auto PMONITOR = m_monitor.lock();
+-
+     g_pHyprRenderer->damageSurface(wlSurface()->resource(), m_realPosition->goal().x, m_realPosition->goal().y, m_isX11 ? 1.0 / m_X11SurfaceScaledBy : 1.0);
+ 
+     if (!m_isX11) {
+@@ -2759,9 +2757,15 @@ void CWindow::commitWindow() {
+         m_popupHead->recheckTree();
+     }
+ 
++    checkTearing(wlSurface()->resource());
++}
++
++void CWindow::checkTearing(SP<CWLSurfaceResource> surface) {
++    const auto PMONITOR = m_monitor.lock();
++
+     // tearing: if solitary, redraw it. This still might be a single surface window
+-    if (PMONITOR && PMONITOR->m_solitaryClient.lock() == m_self.lock() && canBeTorn() && PMONITOR->m_tearingState.canTear && wlSurface()->resource()->m_current.texture) {
+-        CRegion damageBox{wlSurface()->resource()->m_current.accumulateBufferDamage()};
++    if (PMONITOR && PMONITOR->m_solitaryClient.lock() == m_self.lock() && canBeTorn() && PMONITOR->m_tearingState.canTear && surface->m_current.texture) {
++        CRegion damageBox{surface->m_current.accumulateBufferDamage()};
+ 
+         if (!damageBox.empty()) {
+             if (PMONITOR->m_tearingState.busy) {
+diff --git a/src/desktop/view/Window.hpp b/src/desktop/view/Window.hpp
+index 94681cc..7358725 100644
+--- a/src/desktop/view/Window.hpp
++++ b/src/desktop/view/Window.hpp
+@@ -366,6 +366,7 @@ namespace Desktop::View {
+         float                             rounding();
+         float                             roundingPower();
+         bool                              canBeTorn();
++        void                              checkTearing(SP<CWLSurfaceResource> surface);
+         void                              setSuspended(bool suspend);
+         bool                              visibleOnMonitor(PHLMONITOR pMonitor);
+         WORKSPACEID                       workspaceID();

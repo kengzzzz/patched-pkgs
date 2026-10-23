@@ -6,7 +6,7 @@ here installs a package or changes the running system.
 
 | Package | Patches |
 | --- | --- |
-| [hyprland](hyprland/README.md) | Direct scanout feedback for Wine subsurfaces and windows that map fullscreen, tearing fix, guard against a scanout modeset loop |
+| [hyprland](hyprland/README.md) | Tearing fix, tearing and direct scanout feedback for Wine subsurfaces, scanout feedback for windows that map fullscreen, guard against a scanout modeset loop |
 | [quickshell](quickshell/README.md) | Shared VkDevice for all windows, event socket reconnect |
 | [egl-wayland2](egl-wayland2/README.md) | `wl_buffer.release` leak with explicit sync |
 
@@ -80,7 +80,9 @@ than the repository one. When the repository releases a higher version,
 `pacman -Qm` with `pacman -Si <name>` before updating, or add the package to
 `IgnorePkg`.
 
-To roll back, run `sudo pacman -S <name>`.
+`dist/` keeps only the installed build. To roll back a patch, remove it from
+`patches/` or restore the older version from git, bump `PKGREL` and build
+again. `sudo pacman -S <name>` goes back to the unpatched repository package.
 
 ## Updating a package
 
