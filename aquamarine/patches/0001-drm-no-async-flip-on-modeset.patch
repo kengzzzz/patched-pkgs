@@ -1,0 +1,15 @@
+diff --git a/src/backend/drm/DRM.cpp b/src/backend/drm/DRM.cpp
+index 431247b..69ff4c0 100644
+--- a/src/backend/drm/DRM.cpp
++++ b/src/backend/drm/DRM.cpp
+@@ -2613,7 +2613,9 @@ bool Aquamarine::CDRMOutput::commitState(bool onlyTest) {
+ 
+         if (STATE.enabled && (COMMITTED & COutputState::eOutputStateProperties::AQ_OUTPUT_STATE_BUFFER))
+             flags |= DRM_MODE_PAGE_FLIP_EVENT;
+-        if (STATE.presentationMode == AQ_OUTPUT_PRESENTATION_IMMEDIATE && (COMMITTED & COutputState::eOutputStateProperties::AQ_OUTPUT_STATE_BUFFER))
++        // the kernel rejects async page flips that modeset, so the commit that changes the format flips on vblank
++        if (STATE.presentationMode == AQ_OUTPUT_PRESENTATION_IMMEDIATE && (COMMITTED & COutputState::eOutputStateProperties::AQ_OUTPUT_STATE_BUFFER) && !NEEDS_RECONFIG &&
++            !lastCommitNoBuffer)
+             flags |= DRM_MODE_PAGE_FLIP_ASYNC;
+     }
+ 

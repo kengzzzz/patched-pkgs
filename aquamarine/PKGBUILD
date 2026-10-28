@@ -1,0 +1,46 @@
+# Maintainer: Caleb Maclennan <caleb@alerque.com>
+# Contributor: Aaron Blasko <blaskoazzolaaaron [at] gmail.com>
+
+pkgname=aquamarine
+pkgver=$PKGVER
+pkgrel=$PKGREL
+pkgdesc='a very light linux rendering backend library'
+arch=(x86_64 aarch64)
+url="https://github.com/hyprwm/$pkgname"
+license=(BSD-3-Clause)
+depends=(libgcc
+         libstdc++
+         glibc # libc.so libm.so
+         hyprutils libhyprutils.so
+         libdisplay-info libdisplay-info.so
+         libdrm # libdrm.so
+         libglvnd libEGL.so
+         libinput # libinput.so
+         mesa # libgbm.so
+         opengl-driver
+         pixman
+         seatd libseat.so
+         systemd-libs libudev.so
+         wayland libwayland-client.so
+         wayland-protocols)
+makedepends=(cmake
+             hyprwayland-scanner)
+provides=("lib$pkgname.so")
+
+prepare() {
+	cp -a "$startdir/upstream" "$srcdir/upstream"
+}
+
+build() {
+	cd "$srcdir/upstream"
+	cmake -B build \
+		-D CMAKE_INSTALL_PREFIX=/usr \
+		-D CMAKE_BUILD_TYPE=Release
+	cmake --build build --parallel "$BUILD_JOBS"
+}
+
+package() {
+	cd "$srcdir/upstream"
+	DESTDIR="$pkgdir" cmake --install build
+	install -Dm0644 -t "$pkgdir/usr/share/licenses/$pkgname" LICENSE
+}

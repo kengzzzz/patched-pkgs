@@ -9,6 +9,7 @@ here installs a package or changes the running system.
 | [hyprland](hyprland/README.md) | Tearing fix, tearing and direct scanout feedback for Wine subsurfaces, scanout feedback for windows that map fullscreen, guard against a scanout modeset loop, HDR signaling for SDR fullscreen windows |
 | [quickshell](quickshell/README.md) | Shared VkDevice for all windows, event socket reconnect |
 | [egl-wayland2](egl-wayland2/README.md) | `wl_buffer.release` leak with explicit sync |
+| [aquamarine](aquamarine/README.md) | Direct scanout with tearing |
 
 ## Layout
 
@@ -99,5 +100,6 @@ again. `sudo pacman -S <name>` goes back to the unpatched repository package.
 
 The build script, Dockerfiles and documentation are under [0BSD](LICENSE).
 Each patch follows the license of its upstream project: Hyprland
-(BSD-3-Clause), quickshell (LGPL-3.0-only) and egl-wayland2 (Apache-2.0). The
-PKGBUILDs are adapted from Arch Linux packaging (0BSD).
+(BSD-3-Clause), aquamarine (BSD-3-Clause), quickshell (LGPL-3.0-only) and
+egl-wayland2 (Apache-2.0). The PKGBUILDs are adapted from Arch Linux packaging
+(0BSD).
