@@ -42,7 +42,8 @@ with path.open("w") as output:
             record["monitors"] = [
                 {key: monitor.get(key) for key in (
                     "name", "activeWorkspace", "solitary", "solitaryBlockedBy",
-                    "directScanoutTo", "directScanoutBlockedBy", "currentFormat",
+                    "directScanoutTo", "directScanoutBlockedBy", "activelyTearing",
+                    "tearingBlockedBy", "currentFormat",
                 )}
                 for monitor in json.loads(query("monitors", "-j"))
             ]
