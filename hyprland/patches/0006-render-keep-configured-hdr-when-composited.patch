@@ -1,0 +1,20 @@
+diff --git a/src/render/Renderer.cpp b/src/render/Renderer.cpp
+index 249f084..a0d622a 100644
+--- a/src/render/Renderer.cpp
++++ b/src/render/Renderer.cpp
+@@ -2374,12 +2374,13 @@ void IHyprRenderer::handleFullscreenSettings(PHLMONITOR pMonitor) {
+         }
+ 
+         // Do it here instead of disabling the block above to allow hdr -> hdr metadata changes in fullscreen
+-        if (!*PAUTOHDR && !pMonitor->m_lastScanout)
++        // Keep configured HDR enabled while compositing
++        if ((!*PAUTOHDR || configuredHDR) && !pMonitor->m_lastScanout)
+             wantHDR = configuredHDR;
+ 
+         if (!hdrIsHandled) {
+             if (pMonitor->inHDR() != wantHDR) {
+-                if (*PAUTOHDR && !(pMonitor->inHDR() && configuredHDR)) {
++                if (*PAUTOHDR && !configuredHDR) {
+                     // modify or restore monitor image description for auto-hdr
+                     // FIXME ok for now, will need some other logic if monitor image description can be modified some other way
+                     const auto targetCM      = wantHDR ? (*PAUTOHDR == 2 ? NCMType::CM_HDR_EDID : NCMType::CM_HDR) : pMonitor->m_cmType;

@@ -1,6 +1,6 @@
 # hyprland
 
-Hyprland 0.56.2 with five patches.
+Hyprland 0.56.2 with six patches.
 
 ## 0001: keep scanout dmabuf feedback for subsurfaces
 
@@ -91,6 +91,22 @@ check as before. It changes `src/desktop/view/Window.cpp`,
 `src/desktop/view/Window.hpp` and `src/desktop/view/Subsurface.cpp`.
 
 Drop this patch when upstream fixes #16035.
+
+## 0006: keep HDR signaling for SDR fullscreen windows
+
+With a monitor set to `cm = "hdr"`, a fullscreen window whose surface has an
+SDR image description, such as a browser playing video, made auto HDR send
+SDR metadata to the display. Hyprland kept compositing for the PQ image
+description, so the panel showed PQ pixels as SDR and colors were wrong.
+
+The patch keeps the configured HDR metadata whenever the frame is composited.
+An SDR buffer that is scanned out directly still gets SDR metadata. Auto HDR
+also no longer changes the CM type of a monitor configured for HDR, so `hdr`
+and `hdredid` stay as set. Monitors configured for SDR behave as before. It
+changes only `src/render/Renderer.cpp`.
+
+Drop this patch when upstream stops sending SDR metadata for composited
+frames on a monitor configured for HDR.
 
 ## Validation
 
