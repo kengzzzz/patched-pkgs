@@ -6,7 +6,7 @@ here installs a package or changes the running system.
 
 | Package | Patches |
 | --- | --- |
-| [hyprland](hyprland/README.md) | Tearing fix, tearing and direct scanout feedback for Wine subsurfaces, scanout feedback for windows that map fullscreen, guard against a scanout modeset loop, HDR signaling for SDR fullscreen windows |
+| [hyprland](hyprland/README.md) | Tearing and direct scanout feedback for Wine subsurfaces, scanout feedback for windows that map fullscreen, guard against a scanout modeset loop, HDR signaling for SDR fullscreen windows, flow control for torn direct scanout, presentation feedback tagging, top layers over fullscreen windows, tearing hints from subsurfaces |
 | [quickshell](quickshell/README.md) | Shared VkDevice for all windows, event socket reconnect |
 | [egl-wayland2](egl-wayland2/README.md) | `wl_buffer.release` leak with explicit sync |
 | [aquamarine](aquamarine/README.md) | Direct scanout with tearing |

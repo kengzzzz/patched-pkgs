@@ -1,16 +1,16 @@
 diff --git a/src/output/Monitor.cpp b/src/output/Monitor.cpp
-index e69d8dd..eb50165 100644
+index 4a50c9f9..26ef52b6 100644
 --- a/src/output/Monitor.cpp
 +++ b/src/output/Monitor.cpp
-@@ -49,6 +49,7 @@
- #include "../helpers/Drm.hpp"
+@@ -55,6 +55,7 @@
  #include "MonitorFrameScheduler.hpp"
+ #include "OutputCommitCoordinator.hpp"
  #include <aquamarine/output/Output.hpp>
 +#include <aquamarine/backend/DRM.hpp>
  #include "debug/log/Logger.hpp"
  #include "notification/NotificationOverlay.hpp"
  #include "MonitorFrameScheduler.hpp"
-@@ -2083,6 +2084,11 @@ uint16_t CMonitor::isDSBlocked(bool full) {
+@@ -1978,6 +1979,11 @@ uint16_t CMonitor::isDSBlocked(bool full) {
          reasons |= DS_BLOCK_DMA;
          if (!full)
              return reasons;
@@ -22,7 +22,7 @@ index e69d8dd..eb50165 100644
      }
  
      const bool surfaceIsHDR   = PSURFACE->m_colorManagement.valid() && PSURFACE->m_colorManagement->isHDR();
-@@ -2153,20 +2159,24 @@ bool CMonitor::attemptDirectScanout() {
+@@ -2049,20 +2055,24 @@ bool CMonitor::attemptDirectScanout() {
      const auto  previousFormat           = m_drmFormat;
      const auto  previousBuffer           = m_output->state->state().buffer;
      const auto  previousPresentationMode = m_output->state->state().presentationMode;
@@ -52,3 +52,12 @@ index e69d8dd..eb50165 100644
          m_output->state->setFormat(params.format);
          m_drmFormat = params.format;
      }
+@@ -2110,7 +2120,7 @@ bool CMonitor::attemptDirectScanout() {
+         .rollbackSwapchain = false,
+         .tearing           = m_tearingState.activelyTearing,
+         .vrr               = m_vrrActive,
+-        .previousFormat    = previousFormat,
++        .previousFormat    = FORMAT_CHANGE ? std::optional<uint32_t>{previousFormat} : std::nullopt,
+     };
+ 
+     const auto result = m_commitCoordinator->submit(std::move(frame));

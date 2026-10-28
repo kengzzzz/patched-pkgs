@@ -1,0 +1,41 @@
+diff --git a/src/protocols/TearingControl.cpp b/src/protocols/TearingControl.cpp
+index fde49803..173afa87 100644
+--- a/src/protocols/TearingControl.cpp
++++ b/src/protocols/TearingControl.cpp
+@@ -4,6 +4,24 @@
+ #include "../event/EventBus.hpp"
+ #include "../Compositor.hpp"
+ #include "core/Compositor.hpp"
++#include "core/Subcompositor.hpp"
++
++// clients like Wine present into a subsurface, so a hint there applies to the window at the root of the tree
++static SP<CWLSurfaceResource> rootSurface(SP<CWLSurfaceResource> surface) {
++    std::vector<SP<CWLSurfaceResource>> visited;
++
++    while (surface && surface->m_role && surface->m_role->role() == SURFACE_ROLE_SUBSURFACE && std::ranges::find(visited, surface) == visited.end()) {
++        visited.emplace_back(surface);
++
++        const auto SUBSURFACE = sc<CSubsurfaceRole*>(surface->m_role.get())->m_subsurface.lock();
++        if (!SUBSURFACE || !SUBSURFACE->m_parent)
++            break;
++
++        surface = SUBSURFACE->m_parent.lock();
++    }
++
++    return surface;
++}
+ 
+ CTearingControlProtocol::CTearingControlProtocol(const wl_interface* iface, const int& ver, const std::string& name) : IWaylandProtocol(iface, ver, name) {
+     static auto P = Event::bus()->m_events.window.destroy.listen([this](PHLWINDOWREF window) { onWindowDestroy(window.lock()); });
+@@ -52,8 +70,10 @@ CTearingControl::CTearingControl(SP<CWpTearingControlV1> resource_, SP<CWLSurfac
+     m_resource->setDestroy([this](CWpTearingControlV1* res) { PROTO::tearing->onControllerDestroy(this); });
+     m_resource->setSetPresentationHint([this](CWpTearingControlV1* res, wpTearingControlV1PresentationHint hint) { this->onHint(hint); });
+ 
++    const auto ROOT = rootSurface(surf_);
++
+     for (auto const& w : Desktop::windowState()->windows()) {
+-        if (w->wlSurface()->resource() == surf_) {
++        if (ROOT && w->wlSurface()->resource() == ROOT) {
+             m_window = w;
+             break;
+         }

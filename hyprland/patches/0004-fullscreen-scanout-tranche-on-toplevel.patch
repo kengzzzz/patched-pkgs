@@ -1,8 +1,8 @@
 diff --git a/src/layout/algorithm/tiled/scrolling/ScrollingFullscreenHandler.cpp b/src/layout/algorithm/tiled/scrolling/ScrollingFullscreenHandler.cpp
-index 17f6f52..a01135f 100644
+index e449c78a..d2fe50f9 100644
 --- a/src/layout/algorithm/tiled/scrolling/ScrollingFullscreenHandler.cpp
 +++ b/src/layout/algorithm/tiled/scrolling/ScrollingFullscreenHandler.cpp
-@@ -157,7 +157,7 @@ eFullscreenRequestResult CScrollingFullscreenHandler::requestFullscreen(const SF
+@@ -165,7 +165,7 @@ eFullscreenRequestResult CScrollingFullscreenHandler::requestFullscreen(const SF
          static auto PDIRECTSCANOUT = CConfigValue<Config::INTEGER>("render:direct_scanout");
  
          if (*PDIRECTSCANOUT == 1 || (*PDIRECTSCANOUT == 2 && WINDOW->getContentType() == NContentType::CONTENT_TYPE_GAME)) {
@@ -11,29 +11,29 @@ index 17f6f52..a01135f 100644
              if (surf)
                  g_pHyprRenderer->setSurfaceScanoutMode(surf, nullptr);
          }
-@@ -606,7 +606,7 @@ void CScrollingFullscreenHandler::sScrollingDataRecalculateHelper(const SP<Layou
+@@ -640,7 +640,7 @@ void CScrollingFullscreenHandler::sScrollingDataRecalculateHelper(const SP<Layou
          // send a regular tranche
          // ignore if DS is disabled.
-         if ((*PDIRECTSCANOUT == 1 || (*PDIRECTSCANOUT == 2 && LAST_FS_LAYOUTMANAGED_TILED_WINDOW->getContentType() == NContentType::CONTENT_TYPE_GAME))) {
--            auto surf = LAST_FS_LAYOUTMANAGED_TILED_WINDOW->getSolitaryResource();
-+            auto surf = LAST_FS_LAYOUTMANAGED_TILED_WINDOW->wlSurface() ? LAST_FS_LAYOUTMANAGED_TILED_WINDOW->wlSurface()->resource() : nullptr;
+         if ((*PDIRECTSCANOUT == 1 || (*PDIRECTSCANOUT == 2 && LAST_FS_LAYOUT_HANDLED_TILED_WINDOW->getContentType() == NContentType::CONTENT_TYPE_GAME))) {
+-            auto surf = LAST_FS_LAYOUT_HANDLED_TILED_WINDOW->getSolitaryResource();
++            auto surf = LAST_FS_LAYOUT_HANDLED_TILED_WINDOW->wlSurface() ? LAST_FS_LAYOUT_HANDLED_TILED_WINDOW->wlSurface()->resource() : nullptr;
              if (surf)
                  g_pHyprRenderer->setSurfaceScanoutMode(surf, nullptr);
          }
-@@ -620,7 +620,7 @@ void CScrollingFullscreenHandler::sScrollingDataRecalculateHelper(const SP<Layou
-         if (*PDIRECTSCANOUT == 1 || (*PDIRECTSCANOUT == 2 && CURRENTLY_FS_WINDOW->getContentType() == NContentType::CONTENT_TYPE_GAME)) {
+@@ -652,7 +652,7 @@ void CScrollingFullscreenHandler::sScrollingDataRecalculateHelper(const SP<Layou
+         if (*PDIRECTSCANOUT == 1 || (*PDIRECTSCANOUT == 2 && CURRENT_LAYOUT_HANDLED_FS_WINDOW->getContentType() == NContentType::CONTENT_TYPE_GAME)) {
              // send a scanout tranche
              // ignore if DS is disabled.
--            auto surf = CURRENTLY_FS_WINDOW->getSolitaryResource();
-+            auto surf = CURRENTLY_FS_WINDOW->wlSurface() ? CURRENTLY_FS_WINDOW->wlSurface()->resource() : nullptr;
+-            auto surf = CURRENT_LAYOUT_HANDLED_FS_WINDOW->getSolitaryResource();
++            auto surf = CURRENT_LAYOUT_HANDLED_FS_WINDOW->wlSurface() ? CURRENT_LAYOUT_HANDLED_FS_WINDOW->wlSurface()->resource() : nullptr;
              if (surf)
                  g_pHyprRenderer->setSurfaceScanoutMode(surf, MONITOR->m_self.lock());
          }
 diff --git a/src/managers/fullscreen/handler/FullscreenHandler.cpp b/src/managers/fullscreen/handler/FullscreenHandler.cpp
-index fef3881..d995add 100644
+index 58145366..93b88387 100644
 --- a/src/managers/fullscreen/handler/FullscreenHandler.cpp
 +++ b/src/managers/fullscreen/handler/FullscreenHandler.cpp
-@@ -111,7 +111,9 @@ eFullscreenRequestResult IFullscreenHandler::requestFullscreen(const SFullscreen
+@@ -117,7 +117,9 @@ eFullscreenRequestResult IFullscreenHandler::requestFullscreen(const SFullscreen
      static auto PDIRECTSCANOUT = CConfigValue<Config::INTEGER>("render:direct_scanout");
  
      if (*PDIRECTSCANOUT == 1 || (*PDIRECTSCANOUT == 2 && WINDOW->getContentType() == NContentType::CONTENT_TYPE_GAME)) {

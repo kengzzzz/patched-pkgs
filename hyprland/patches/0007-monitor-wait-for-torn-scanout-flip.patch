@@ -1,0 +1,33 @@
+diff --git a/src/output/Monitor.cpp b/src/output/Monitor.cpp
+index 26ef52b6..ad12f7d6 100644
+--- a/src/output/Monitor.cpp
++++ b/src/output/Monitor.cpp
+@@ -2132,6 +2132,10 @@ bool CMonitor::attemptDirectScanout() {
+ 
+     scanoutCommitted = true;
+ 
++    // like a composited torn frame, hold the next commit until this flip completes. Otherwise it fails and DS is left.
++    if (m_tearingState.activelyTearing)
++        m_tearingState.busy = true;
++
+     m_scanoutNeedsCursorUpdate = false;
+ 
+     if (!PBUFFER->lockedByBackend || PBUFFER->m_hlEvents.backendRelease)
+diff --git a/src/render/Renderer.cpp b/src/render/Renderer.cpp
+index a9efcd13..70136737 100644
+--- a/src/render/Renderer.cpp
++++ b/src/render/Renderer.cpp
+@@ -2312,6 +2312,13 @@ void IHyprRenderer::renderMonitor(PHLMONITOR pMonitor, bool commit) {
+         return;
+     }
+ 
++    // a torn frame can't be committed over a pending flip, e.g. a vsync flip from before tearing started, so draw it when the flip completes
++    if (pMonitor->m_tearingState.nextRenderTorn && pMonitor->m_output->pendingPageFlip()) {
++        if (pMonitor->m_tearingState.activelyTearing)
++            pMonitor->m_tearingState.frameScheduledWhileBusy = true;
++        return;
++    }
++
+     // tearing and DS first
+     bool       shouldTear              = pMonitor->updateTearing();
+     const bool canAttemptDirectScanout = pMonitor->canAttemptDirectScanoutFast();

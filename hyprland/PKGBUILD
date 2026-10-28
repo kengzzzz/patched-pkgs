@@ -24,6 +24,7 @@ depends=(cairo # libcairo.so
          hyprutils libhyprutils.so
          hyprwire libhyprwire.so
          lcms2 liblcms2.so
+         libcanberra libcanberra.so
          libdrm # libdrm.so
          libglvnd libEGL.so libGLESv2.so
          libinput # libinput.so
@@ -41,6 +42,7 @@ depends=(cairo # libcairo.so
          pango libpango-1.0.so libpangocairo-1.0.so
          pixman libpixman-1.so
          re2 libre2.so
+         sdbus-cpp libsdbus-c++.so
          tomlplusplus libtomlplusplus.so
          util-linux-libs libuuid.so
          wayland libwayland-server.so

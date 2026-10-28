@@ -1,8 +1,8 @@
 diff --git a/src/protocols/LinuxDMABUF.cpp b/src/protocols/LinuxDMABUF.cpp
-index 897c98dcec4..4f62270a05c 100644
+index 7d6cb6ff..da780410 100644
 --- a/src/protocols/LinuxDMABUF.cpp
 +++ b/src/protocols/LinuxDMABUF.cpp
-@@ -8,6 +8,7 @@
+@@ -9,6 +9,7 @@
  #include <fcntl.h>
  #include <sys/stat.h>
  #include "core/Compositor.hpp"
@@ -10,7 +10,7 @@ index 897c98dcec4..4f62270a05c 100644
  #include "render/Renderer.hpp"
  #include "types/DMABuffer.hpp"
  #include "types/WLBuffer.hpp"
-@@ -25,6 +26,24 @@ static std::optional<dev_t> devIDFromFD(int fd) {
+@@ -26,6 +27,24 @@ static std::optional<dev_t> devIDFromFD(int fd) {
      return stat.st_rdev;
  }
  
@@ -35,7 +35,7 @@ index 897c98dcec4..4f62270a05c 100644
  CDMABUFFormatTable::CDMABUFFormatTable(SDMABUFTranche _rendererTranche, std::vector<std::pair<PHLMONITORREF, SDMABUFTranche>> tranches_) :
      m_rendererTranche(_rendererTranche), m_monitorTranches(tranches_) {
  
-@@ -333,7 +352,7 @@ CLinuxDMABUFFeedbackResource::CLinuxDMABUFFeedbackResource(UP<CZwpLinuxDmabufFee
+@@ -343,7 +362,7 @@ CLinuxDMABUFFeedbackResource::CLinuxDMABUFFeedbackResource(UP<CZwpLinuxDmabufFee
  
      auto& formatTable = PROTO::linuxDma->m_formatTable;
      m_resource->sendFormatTable(formatTable->m_tableFD.get(), formatTable->m_tableSize);
@@ -44,7 +44,7 @@ index 897c98dcec4..4f62270a05c 100644
  }
  
  bool CLinuxDMABUFFeedbackResource::good() {
-@@ -375,6 +394,25 @@ void CLinuxDMABUFFeedbackResource::sendDefaultFeedback() {
+@@ -385,6 +404,25 @@ void CLinuxDMABUFFeedbackResource::sendDefaultFeedback() {
      m_lastFeedbackWasScanout = false;
  }
  
@@ -70,7 +70,7 @@ index 897c98dcec4..4f62270a05c 100644
  CLinuxDMABUFResource::CLinuxDMABUFResource(UP<CZwpLinuxDmabufV1>&& resource_) : m_resource(std::move(resource_)) {
      if UNLIKELY (!good())
          return;
-@@ -391,6 +429,8 @@ CLinuxDMABUFResource::CLinuxDMABUFResource(UP<CZwpLinuxDmabufV1>&& resource_) :
+@@ -401,6 +439,8 @@ CLinuxDMABUFResource::CLinuxDMABUFResource(UP<CZwpLinuxDmabufV1>&& resource_) :
              PROTO::linuxDma->m_feedbacks.pop_back();
              return;
          }
@@ -79,7 +79,7 @@ index 897c98dcec4..4f62270a05c 100644
      });
  
      m_resource->setGetSurfaceFeedback([](CZwpLinuxDmabufV1* r, uint32_t id, wl_resource* surf) {
-@@ -402,6 +442,23 @@ CLinuxDMABUFResource::CLinuxDMABUFResource(UP<CZwpLinuxDmabufV1>&& resource_) :
+@@ -412,6 +452,23 @@ CLinuxDMABUFResource::CLinuxDMABUFResource(UP<CZwpLinuxDmabufV1>&& resource_) :
              PROTO::linuxDma->m_feedbacks.pop_back();
              return;
          }
@@ -92,7 +92,7 @@ index 897c98dcec4..4f62270a05c 100644
 +                continue;
 +
 +            if (auto* tranche = PROTO::linuxDma->monitorTrancheFor(monitor.lock()); tranche) {
-+                LOGM(Log::DEBUG, "getSurfaceFeedback: surface is in scanout mode, sending a scanout tranche");
++                LOG(Log::DEBUG, "getSurfaceFeedback: surface is in scanout mode, sending a scanout tranche");
 +                RESOURCE->sendScanoutFeedback(*tranche);
 +                return;
 +            }
@@ -103,7 +103,7 @@ index 897c98dcec4..4f62270a05c 100644
      });
  
      m_resource->setCreateParams([](CZwpLinuxDmabufV1* r, uint32_t id) {
-@@ -600,53 +657,52 @@ void CLinuxDMABufV1Protocol::destroyResource(CLinuxDMABuffer* resource) {
+@@ -610,53 +667,52 @@ void CLinuxDMABufV1Protocol::destroyResource(CLinuxDMABuffer* resource) {
      std::erase_if(m_buffers, [&](const auto& other) { return other.get() == resource; });
  }
  
@@ -123,14 +123,14 @@ index 897c98dcec4..4f62270a05c 100644
 +        std::ranges::find_if(m_formatTable->m_monitorTranches, [pMonitor](std::pair<PHLMONITORREF, SDMABUFTranche> pair) { return pair.first == pMonitor; });
  
 -    if (!feedbackResource) {
--        LOGM(Log::DEBUG, "updateScanoutTranche: surface has no dmabuf_feedback");
+-        LOG(Log::DEBUG, "updateScanoutTranche: surface has no dmabuf_feedback");
 -        return;
 -    }
 +    if (monitorTranchePair == m_formatTable->m_monitorTranches.end())
 +        return nullptr;
  
 -    if (!pMonitor) {
--        LOGM(Log::DEBUG, "updateScanoutTranche: resetting feedback");
+-        LOG(Log::DEBUG, "updateScanoutTranche: resetting feedback");
 -        feedbackResource->sendDefaultFeedback();
 -        return;
 -    }
@@ -147,7 +147,7 @@ index 897c98dcec4..4f62270a05c 100644
 +
 +    auto* monitorTranche = monitorTrancheFor(pMonitor);
 +    if (pMonitor && !monitorTranche) {
-         LOGM(Log::DEBUG, "updateScanoutTranche: monitor has no tranche");
+         LOG(Log::DEBUG, "updateScanoutTranche: monitor has no tranche");
          return;
      }
  
@@ -155,7 +155,7 @@ index 897c98dcec4..4f62270a05c 100644
 +    if (pMonitor && ROOT)
 +        m_scanoutSurfaces.emplace_back(ROOT, pMonitor);
  
--    LOGM(Log::DEBUG, "updateScanoutTranche: sending a scanout tranche");
+-    LOG(Log::DEBUG, "updateScanoutTranche: sending a scanout tranche");
 +    bool hasFeedback = false;
 +    for (auto const& f : m_feedbacks) {
 +        if (!f->m_surface || rootSurface(f->m_surface) != ROOT)
@@ -173,27 +173,27 @@ index 897c98dcec4..4f62270a05c 100644
 -    feedbackResource->sendTranche(monitorTranche);
 -    feedbackResource->sendTranche(m_formatTable->m_rendererTranche);
 +        if (!pMonitor) {
-+            LOGM(Log::DEBUG, "updateScanoutTranche: resetting feedback");
++            LOG(Log::DEBUG, "updateScanoutTranche: resetting feedback");
 +            f->sendDefaultFeedback();
 +            continue;
 +        }
  
 -    feedbackResource->m_resource->sendDone();
-+        LOGM(Log::DEBUG, "updateScanoutTranche: sending a scanout tranche");
++        LOG(Log::DEBUG, "updateScanoutTranche: sending a scanout tranche");
 +        f->sendScanoutFeedback(*monitorTranche);
 +    }
  
 -    feedbackResource->m_lastFeedbackWasScanout = true;
 +    if (!hasFeedback)
-+        LOGM(Log::DEBUG, "updateScanoutTranche: surface has no dmabuf_feedback");
++        LOG(Log::DEBUG, "updateScanoutTranche: surface has no dmabuf_feedback");
  }
  
  dev_t CLinuxDMABufV1Protocol::getMainDevice() {
 diff --git a/src/protocols/LinuxDMABUF.hpp b/src/protocols/LinuxDMABUF.hpp
-index 93a400a2379..0b88bfd20e3 100644
+index 2e98182d..3e2389cf 100644
 --- a/src/protocols/LinuxDMABUF.hpp
 +++ b/src/protocols/LinuxDMABUF.hpp
-@@ -83,6 +83,7 @@ class CLinuxDMABUFFeedbackResource {
+@@ -86,6 +86,7 @@ class CLinuxDMABUFFeedbackResource {
  
      bool                   good();
      void                   sendDefaultFeedback();
@@ -201,7 +201,7 @@ index 93a400a2379..0b88bfd20e3 100644
      void                   sendTranche(SDMABUFTranche& tranche);
  
      SP<CWLSurfaceResource> m_surface; // optional, for surface feedbacks
-@@ -121,7 +122,8 @@ class CLinuxDMABufV1Protocol : public IWaylandProtocol {
+@@ -124,7 +125,8 @@ class CLinuxDMABufV1Protocol : public IWaylandProtocol {
      void destroyResource(CLinuxDMABUFParamsResource* resource);
      void destroyResource(CLinuxDMABuffer* resource);
  
@@ -211,7 +211,7 @@ index 93a400a2379..0b88bfd20e3 100644
  
      //
      std::vector<UP<CLinuxDMABUFResource>>         m_managers;
-@@ -129,6 +131,9 @@ class CLinuxDMABufV1Protocol : public IWaylandProtocol {
+@@ -132,6 +134,9 @@ class CLinuxDMABufV1Protocol : public IWaylandProtocol {
      std::vector<UP<CLinuxDMABUFParamsResource>>   m_params;
      std::vector<UP<CLinuxDMABuffer>>              m_buffers;
  
