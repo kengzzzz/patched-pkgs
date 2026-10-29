@@ -4,3 +4,8 @@ hyprland/diagnostics/*.json
 hyprland/diagnostics/*.jsonl
 hyprland/diagnostics/*.png
 hyprland/diagnostics/stall-*/
+hyprland/diagnostics/latency/client/build/
+hyprland/diagnostics/latency/live/scanout-*/
+hyprland/diagnostics/latency/live/composited-*/
+hyprland/diagnostics/latency/vm/work/
+hyprland/diagnostics/latency/vm/results-*/

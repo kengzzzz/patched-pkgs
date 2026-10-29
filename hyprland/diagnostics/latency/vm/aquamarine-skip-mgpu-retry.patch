@@ -1,0 +1,18 @@
+diff --git a/src/backend/drm/DRM.cpp b/src/backend/drm/DRM.cpp
+index 431247b..9117053 100644
+--- a/src/backend/drm/DRM.cpp
++++ b/src/backend/drm/DRM.cpp
+@@ -897,7 +897,12 @@ bool Aquamarine::CDRMBackend::updateSecondaryRendererState(DRMFBList* deferred)
+         if (rendererState.renderer && rendererState.allocator)
+             return true;
+ 
+-        return initMgpu();
++        static bool mgpuFailed = false;
++        if (mgpuFailed)
++            return true;
++
++        mgpuFailed = !initMgpu();
++        return !mgpuFailed;
+     }
+ 
+     const bool hasEnabledOutputs = std::ranges::any_of(connectors, [](const auto& c) { return c->status == DRM_MODE_CONNECTED && c->output && c->output->enabledState; });

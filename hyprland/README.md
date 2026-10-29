@@ -314,6 +314,17 @@ Tested on 0.57.0 with the same setup:
   using CPU, it saves the last 3 seconds. It shows whether Hyprland was
   blocked in a commit, idle, or still rendering. The game log is copied on
   every game exit.
+- `diagnostics/latency/live/run.sh scanout|composited` measures the time
+  from a test client's commit to the page flip on the focused monitor, with
+  vsync, uncapped and with tearing. `composited` turns direct scanout off.
+  It runs on workspace 9, hides the cursor after 1 second and restores the
+  settings it changed. Keep the mouse still while it runs.
+- `diagnostics/latency/vm/setup.sh` builds stock and patched Hyprland and
+  aquamarine and a KVM guest with a virtual display. `vm/run.sh` compares
+  them on direct scanout, OSDs and fullscreen changes, with a checksum of
+  every displayed frame and the CPU instructions per frame. The guest has
+  no async page flips or HDR metadata, so tearing and HDR need the live
+  test. The results are in `diagnostics/latency/RESULTS.md`.
 
 The scripts write their output next to themselves, and git ignores it.
 
