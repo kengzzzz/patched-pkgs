@@ -1,6 +1,6 @@
 # hyprland
 
-Hyprland 0.57.0 with twelve patches. The numbers carry over from earlier
+Hyprland 0.57.0 with thirteen patches. The numbers carry over from earlier
 releases. 0002, a backport of the tearing fix in upstream PR
 [#16572](https://github.com/hyprwm/Hyprland/pull/16572), was dropped because
 0.57.0 includes it.
@@ -238,6 +238,49 @@ matters for auto HDR. It changes only `src/render/Renderer.cpp`.
 Drop this patch when upstream can keep the monitor's HDR metadata for
 fullscreen windows.
 
+## 0014: keep screenshots of HDR frames in SDR colors
+
+With a monitor in HDR, Hyprland draws an SDR copy of each frame next to the
+HDR frame, and screenshots and screen shares read that copy. Plain SDR
+windows came out right, but two kinds of content did not:
+
+- The blurred background behind a translucent window is already in the HDR
+  work buffer's linear encoding. It went into the copy unconverted and came
+  out much darker. Window snapshots used for close animations had the same
+  problem.
+- A surface with an HDR image description, like a browser that switches to
+  HDR with the output, was copied with 80 nits as SDR white. Its own SDR white
+  is usually 203 nits, so it came out too bright and its highlights clipped.
+
+The patch converts textures that are already in the FP16 work buffer back to
+SDR for the copy and undoes the SDR brightness boost. An HDR surface puts its
+reference white at SDR white in the copy, before tone mapping, and brighter
+highlights clip. The copy is also kept on HDR monitors without SDR brightness
+or saturation changes when the work buffer is FP16. Before, those
+screenshots were converted from the whole HDR frame, which shifted colors and
+clipped HDR surfaces the same way. The patch also fixes the inner glow
+shader, which returned the wrong type for the copy and failed to compile, so
+the glow was missing in HDR with SDR brightness or saturation changes.
+
+Known limits:
+
+- The conversion assumes the content was SDR. HDR content in a blurred
+  background or in a close animation snapshot comes out too bright. For the
+  blur, this needs a blurred window over an HDR window, which
+  `decoration:blur:xray` avoids for floating windows over tiled ones.
+- Without an FP16 work buffer (`render:use_fp16 = 0`), the copy keeps the
+  monitor's BT.2020 primaries as before, and only the HDR surface change
+  applies.
+
+It changes `src/render/shaders/glsl/cm_helpers.glsl`,
+`src/render/shaders/glsl/surface.frag`,
+`src/render/shaders/glsl/inner_glow.glsl`, `src/render/OpenGL.cpp`,
+`src/render/Shader.cpp`, `src/render/Shader.hpp` and
+`src/output/Monitor.cpp`.
+
+Drop this patch when upstream converts blurred backgrounds and HDR surfaces
+for the SDR copy.
+
 ## Validation
 
 Tested on 0.56.2 with an RTX 5080 and a 3440x1440 240 Hz QD-OLED, in SDR with
@@ -295,6 +338,15 @@ Tested on 0.57.0 with the same setup:
   scanned it out with SDR metadata, so the monitor left HDR while the game was
   scanned out. With `non_shader_cm = "ondemand"`, the game stayed composited
   and the monitor stayed in HDR, at a lower frame rate.
+- 0014 in a nested session with HDR forced on its output and an FP16 work
+  buffer, against screenshots with HDR off: a gray ramp and color patches in
+  an SDR image viewer, the same patches in a browser that switched to HDR, a
+  translucent terminal over a blurred wallpaper, and an inner glow. With SDR
+  brightness 1.2 and 1.0, the viewer, the terminal and the glow matched
+  exactly, and the browser matched except pure cyan, 7 levels off in red.
+  Without the patch, the browser's grays came out up to 85 levels brighter,
+  and with SDR brightness 1.2 the terminal's background was darker and the
+  glow was missing. SDR frames were the same with and without the patch.
 
 ## References and diagnostics
 

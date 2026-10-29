@@ -1,0 +1,195 @@
+diff --git a/src/output/Monitor.cpp b/src/output/Monitor.cpp
+index c1f5a35..74d0e6e 100644
+--- a/src/output/Monitor.cpp
++++ b/src/output/Monitor.cpp
+@@ -2739,7 +2739,8 @@ bool CMonitor::needsUnmodifiedCopy() {
+     const bool HAS_MODS = m_sdrMinLuminance != SDR_MIN_LUMINANCE || m_sdrMaxLuminance != SDR_MAX_LUMINANCE || (m_sdrBrightness > 0 && m_sdrBrightness != 1.0) ||
+         (m_sdrSaturation > 0 && m_sdrSaturation != 1.0);
+ 
+-    if (!HAS_MODS)
++    // the copy is only right with an sRGB primaries (FP16) work buffer, but there it also beats converting the whole HDR frame back without mods
++    if (!HAS_MODS && !useFP16())
+         return false;
+ 
+     // TODO handle some FP16 cases
+diff --git a/src/render/OpenGL.cpp b/src/render/OpenGL.cpp
+index cb2801c..ca0dffb 100644
+--- a/src/render/OpenGL.cpp
++++ b/src/render/OpenGL.cpp
+@@ -1296,6 +1296,7 @@ void CHyprOpenGLImpl::passCMUniforms(WP<CShader> shader, const NColorManagement:
+     shader->setUniformInt(SHADER_TONEMAP_MODE, settings.tonemapMode);
+     shader->setUniformFloat(SHADER_SDR_SATURATION, settings.sdrSaturation);
+     shader->setUniformFloat(SHADER_SDR_BRIGHTNESS, settings.sdrBrightnessMultiplier);
++    shader->setUniformFloat(SHADER_MIRROR_REF_LUMINANCE, settings.srcRefLuminance > 0 ? settings.srcRefLuminance : HDR_REF_LUMINANCE);
+ 
+     if (!targetImageDescription->value().icc.present) {
+         const auto cacheKey = std::pair{imageDescription->id(), targetImageDescription->id()};
+@@ -1551,6 +1552,17 @@ WP<CShader> CHyprOpenGLImpl::renderToFBInternal(CRenderContext& ctx, SP<ITexture
+ 
+     shader->setUniformFloat(SHADER_ALPHA, alpha);
+ 
++    if (globalFeatures(ctx) & SH_FEAT_MIRROR) {
++        // the unmodified copy holds SDR values, so our own textures that are already in the work buffer, like the blurred background, need the SDR mapping undone
++        const auto SDR_TO_WORK = g_pHyprRenderer->getCMSettings(ctx, getDefaultImageDescription(), WORK_BUFFER_IMAGE_DESCRIPTION, nullptr, true,
++                                                                ctx.m_data.pMonitor->m_sdrMinLuminance, ctx.m_data.pMonitor->m_sdrMaxLuminance);
++        shader->setUniformInt(SHADER_MIRROR_FROM_WORK, tex->m_imageDescription && !tex->m_imageDescription->needsCM(WORK_BUFFER_IMAGE_DESCRIPTION));
++        shader->setUniformInt(SHADER_MIRROR_WORK_TF, SDR_TO_WORK.targetTF);
++        shader->setUniformFloat2(SHADER_MIRROR_WORK_TF_RANGE, SDR_TO_WORK.dstTFRange.min, SDR_TO_WORK.dstTFRange.max);
++        shader->setUniformFloat2(SHADER_MIRROR_SDR_TF_RANGE, SDR_TO_WORK.srcTFRange.min, SDR_TO_WORK.srcTFRange.max);
++        shader->setUniformFloat(SHADER_MIRROR_SDR_BRIGHTNESS, SDR_TO_WORK.sdrBrightnessMultiplier);
++    }
++
+     if (shaderFeatures & SH_FEAT_BLUR) {
+         const auto BLURUV = resolveBlurUV(newBox, data.blurredBG->m_size);
+ 
+diff --git a/src/render/Shader.cpp b/src/render/Shader.cpp
+index 5a49d13..8bc19ef 100644
+--- a/src/render/Shader.cpp
++++ b/src/render/Shader.cpp
+@@ -144,6 +144,13 @@ void CShader::getUniformLocations() {
+     m_uniformLocations[SHADER_LUT_3D]               = getUniform("iccLut3D");
+     m_uniformLocations[SHADER_LUT_SIZE]             = getUniform("iccLutSize");
+     m_uniformLocations[SHADER_TONEMAP_MODE]         = getUniform("tonemapMode");
++
++    m_uniformLocations[SHADER_MIRROR_REF_LUMINANCE]  = getUniform("mirrorRefLuminance");
++    m_uniformLocations[SHADER_MIRROR_WORK_TF]        = getUniform("mirrorWorkTF");
++    m_uniformLocations[SHADER_MIRROR_WORK_TF_RANGE]  = getUniform("mirrorWorkTFRange");
++    m_uniformLocations[SHADER_MIRROR_SDR_TF_RANGE]   = getUniform("mirrorSDRTFRange");
++    m_uniformLocations[SHADER_MIRROR_SDR_BRIGHTNESS] = getUniform("mirrorSDRBrightness");
++    m_uniformLocations[SHADER_MIRROR_FROM_WORK]      = getUniform("mirrorFromWork");
+     //
+     m_uniformLocations[SHADER_TEX]                      = getUniform("tex");
+     m_uniformLocations[SHADER_BLURRED_BG]               = getUniform("blurredBG");
+diff --git a/src/render/Shader.hpp b/src/render/Shader.hpp
+index 1d8feb9..c428732 100644
+--- a/src/render/Shader.hpp
++++ b/src/render/Shader.hpp
+@@ -19,6 +19,12 @@ enum eShaderUniform : uint8_t {
+     SHADER_DST_REF_LUMINANCE,
+     SHADER_SDR_SATURATION,
+     SHADER_SDR_BRIGHTNESS,
++    SHADER_MIRROR_REF_LUMINANCE,
++    SHADER_MIRROR_WORK_TF,
++    SHADER_MIRROR_WORK_TF_RANGE,
++    SHADER_MIRROR_SDR_TF_RANGE,
++    SHADER_MIRROR_SDR_BRIGHTNESS,
++    SHADER_MIRROR_FROM_WORK,
+     SHADER_CONVERT_MATRIX,
+     SHADER_TEX,
+     SHADER_ALPHA,
+diff --git a/src/render/shaders/glsl/cm_helpers.glsl b/src/render/shaders/glsl/cm_helpers.glsl
+index 5f8f544..1ae7037 100644
+--- a/src/render/shaders/glsl/cm_helpers.glsl
++++ b/src/render/shaders/glsl/cm_helpers.glsl
+@@ -200,6 +200,26 @@ vec4 fromLinearNit(vec4 color, int tf, vec2 range) {
+     return color;
+ }
+ 
++#if USE_MIRROR
++uniform float mirrorRefLuminance;
++uniform int   mirrorWorkTF;
++uniform vec2  mirrorWorkTFRange;
++uniform vec2  mirrorSDRTFRange;
++uniform float mirrorSDRBrightness;
++
++// Undoes the SDR to work buffer mapping for colors that are already in the FP16 work buffer, like the blurred background.
++// A PQ work buffer is left alone: its blur has the SDR brightness divided out already, and its primaries aren't sRGB.
++vec4 workToMirror(vec4 color) {
++    if (mirrorWorkTF != CM_TRANSFER_FUNCTION_EXT_LINEAR || color.a <= 0.0)
++        return color;
++
++    color.rgb /= color.a * mirrorSDRBrightness;
++    color = toNit(color, mirrorWorkTFRange);
++    color.rgb *= color.a;
++    return fromLinearNit(color, CM_TRANSFER_FUNCTION_SRGB, mirrorSDRTFRange);
++}
++#endif
++
+ #if USE_TONEMAP
+ #include "tonemap.glsl"
+ #endif
+@@ -245,15 +265,16 @@ vec4
+         pixColor = toNit(pixColor, srcTFRange);
+     pixColor.a   = finalAlpha;
+     pixColor.rgb *= pixColor.a;
+-#if USE_TONEMAP
+-    pixColor = tonemap(pixColor, dstxyz, maxLuminance, dstMaxLuminance, dstRefLuminance, srcRefLuminance, tonemapMode);
+-#endif
+ 
+ #if USE_MIRROR
+-    // TODO HDR -> SDR tonemap
++    // HDR sources put their reference white at SDR white and clip above it
+     vec4 mirrorColor = fromLinearNit(pixColor, CM_TRANSFER_FUNCTION_SRGB,
+-                                     srcTF == CM_TRANSFER_FUNCTION_GAMMA22 || srcTF == CM_TRANSFER_FUNCTION_SRGB ? srcTFRange : vec2(SDR_MIN_LUMINANCE, SDR_MAX_LUMINANCE));
++                                     srcTF == CM_TRANSFER_FUNCTION_GAMMA22 || srcTF == CM_TRANSFER_FUNCTION_SRGB ? srcTFRange : vec2(0.0, mirrorRefLuminance));
+ #endif
++#if USE_TONEMAP
++    pixColor = tonemap(pixColor, dstxyz, maxLuminance, dstMaxLuminance, dstRefLuminance, srcRefLuminance, tonemapMode);
++#endif
++
+     pixColor = fromLinearNit(pixColor, dstTF, dstTFRange);
+ #if USE_SDR_MOD
+     pixColor = saturate(pixColor, dstxyz, sdrSaturation);
+diff --git a/src/render/shaders/glsl/inner_glow.glsl b/src/render/shaders/glsl/inner_glow.glsl
+index bc74721..f13bad7 100644
+--- a/src/render/shaders/glsl/inner_glow.glsl
++++ b/src/render/shaders/glsl/inner_glow.glsl
+@@ -27,8 +27,13 @@ float innerGlowSmin(float a, float b, float k) {
+     return min(a, b) - h * h * h * k * (1.0 / 6.0);
+ }
+ 
+-vec4 getInnerGlow(vec4 pixColor, vec4 colorSRGB, vec2 v_texcoord, float radius, float roundingPower, vec2 topLeft, vec2 fullSize, float range, float glowPower, vec2 bottomRight,
+-                  int gradientLength, vec4 gradient[10], float angle, int gradient2Length, vec4 gradient2[10], float angle2, float gradientLerp, float alpha) {
++#if USE_MIRROR
++vec4[2]
++#else
++vec4
++#endif
++    getInnerGlow(vec4 pixColor, vec4 colorSRGB, vec2 v_texcoord, float radius, float roundingPower, vec2 topLeft, vec2 fullSize, float range, float glowPower, vec2 bottomRight,
++                 int gradientLength, vec4 gradient[10], float angle, int gradient2Length, vec4 gradient2[10], float angle2, float gradientLerp, float alpha) {
+     vec2 pixCoord = fullSize * v_texcoord;
+ 
+     if (gradientLength > 0 || gradient2Length > 0)
+diff --git a/src/render/shaders/glsl/surface.frag b/src/render/shaders/glsl/surface.frag
+index ceeab12..1ceabe3 100644
+--- a/src/render/shaders/glsl/surface.frag
++++ b/src/render/shaders/glsl/surface.frag
+@@ -63,6 +63,11 @@ const mat3 targetPrimariesXYZ = mat3(0.0);
+ #include "CM.glsl"
+ #endif
+ 
++#if USE_MIRROR && !USE_CM
++#include "cm_helpers.glsl"
++uniform bool mirrorFromWork;
++#endif
++
+ layout(location = 0) out vec4 fragColor;
+ #if USE_MIRROR
+ layout(location = 1) out vec4 mirrorColor;
+@@ -124,7 +129,7 @@ void main() {
+     pixColor    = pixColors[0];
+     mirrorColor = pixColors[1];
+ #else
+-    mirrorColor = pixColor;
++    mirrorColor = mirrorFromWork ? workToMirror(pixColor) : pixColor;
+ #endif
+ #endif
+ 
+@@ -200,7 +205,7 @@ void main() {
+     if (discardAlpha && mirrorColor.a <= discardAlphaValue)
+         mirrorBlurAlphaMask = 0.0;
+ #endif
+-    vec4  blurredMirrorColor = texture(blurredBG, blurUV);
++    vec4  blurredMirrorColor = workToMirror(texture(blurredBG, blurUV));
+ #if USE_BLUR_PROPORTIONAL
+     float t                  = 1.0 - pixColor.a;
+     float blurredMirrorAlpha = 1.0 - t * t * t;
+@@ -218,7 +223,7 @@ void main() {
+ #else
+         float mirrorBlurAlphaMask = 1.0;
+ #endif
+-        vec4  blurredMirrorColor = texture(blurredBG, blurUV);
++        vec4  blurredMirrorColor = workToMirror(texture(blurredBG, blurUV));
+ #if USE_BLUR_PROPORTIONAL
+         float t                  = 1.0 - pixColor.a;
+         float blurredMirrorAlpha = 1.0 - t * t * t;
