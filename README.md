@@ -10,6 +10,7 @@ here installs a package or changes the running system.
 | [quickshell](quickshell/README.md) | Shared VkDevice for all windows, event socket reconnect |
 | [egl-wayland2](egl-wayland2/README.md) | `wl_buffer.release` leak with explicit sync |
 | [aquamarine](aquamarine/README.md) | Direct scanout with tearing, format and HDR metadata changes without a modeset, buffer age of new swapchain buffers |
+| [qt6-declarative](qt6-declarative/README.md) | Recreate an out-of-date swapchain in the threaded render loop, Arch's backports |
 
 ## Layout
 
@@ -100,6 +101,7 @@ again. `sudo pacman -S <name>` goes back to the unpatched repository package.
 
 The build script, Dockerfiles and documentation are under [0BSD](LICENSE).
 Each patch follows the license of its upstream project: Hyprland
-(BSD-3-Clause), aquamarine (BSD-3-Clause), quickshell (LGPL-3.0-only) and
-egl-wayland2 (Apache-2.0). The PKGBUILDs are adapted from Arch Linux packaging
+(BSD-3-Clause), aquamarine (BSD-3-Clause), quickshell (LGPL-3.0-only),
+egl-wayland2 (Apache-2.0) and Qt Declarative (LGPL-3.0-only, GPL-2.0-only or
+GPL-3.0-only). The PKGBUILDs are adapted from Arch Linux packaging
 (0BSD).

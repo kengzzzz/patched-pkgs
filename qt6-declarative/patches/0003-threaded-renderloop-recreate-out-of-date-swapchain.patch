@@ -1,0 +1,57 @@
+diff --git a/src/quick/scenegraph/qsgthreadedrenderloop.cpp b/src/quick/scenegraph/qsgthreadedrenderloop.cpp
+index 7273923bb9..82bf85f000 100644
+--- a/src/quick/scenegraph/qsgthreadedrenderloop.cpp
++++ b/src/quick/scenegraph/qsgthreadedrenderloop.cpp
+@@ -305,6 +305,7 @@ public:
+     bool rhiDoomed = false;
+     bool guiNotifiedAboutRhiFailure = false;
+     bool swRastFallbackDueToSwapchainFailure = false;
++    bool swapchainOutOfDate = false;
+ 
+     // Local event queue stuff...
+     bool stopEventProcessing;
+@@ -649,7 +650,7 @@ void QSGRenderThread::syncAndRender()
+         }
+ 
+         const QSize previousOutputSize = cd->swapchain->currentPixelSize();
+-        if (previousOutputSize != effectiveOutputSize || cd->swapchainJustBecameRenderable) {
++        if (previousOutputSize != effectiveOutputSize || cd->swapchainJustBecameRenderable || swapchainOutOfDate) {
+             if (cd->swapchainJustBecameRenderable)
+                 qCDebug(QSG_LOG_RENDERLOOP, QSG_RT_PAD, "just became exposed");
+ 
+@@ -665,6 +666,8 @@ void QSGRenderThread::syncAndRender()
+                     swRastFallbackDueToSwapchainFailure = true;
+                     teardownGraphics();
+                     bailOut = true;
++                } else if (swapchainOutOfDate) {
++                    bailOut = true;
+                 }
+                 if (bailOut) {
+                     QCoreApplication::postEvent(window, new QEvent(QEvent::Type(QQuickWindowPrivate::FullUpdateRequest)));
+@@ -679,6 +682,7 @@ void QSGRenderThread::syncAndRender()
+                 }
+             }
+ 
++            swapchainOutOfDate = false;
+             cd->swapchainJustBecameRenderable = false;
+             cd->hasRenderableSwapchain = cd->hasActiveSwapchain;
+ 
+@@ -700,6 +704,9 @@ void QSGRenderThread::syncAndRender()
+             // try again later
+             if (frameResult == QRhi::FrameOpDeviceLost || frameResult == QRhi::FrameOpSwapChainOutOfDate)
+                 QCoreApplication::postEvent(window, new QEvent(QEvent::Type(QQuickWindowPrivate::FullUpdateRequest)));
++            // the swapchain stays out of date until it is recreated, even when the size is unchanged
++            if (frameResult == QRhi::FrameOpSwapChainOutOfDate)
++                swapchainOutOfDate = true;
+             // Before returning we need to ensure the same wake up logic that
+             // would have happened if beginFrame() had suceeded.
+             if (syncRequested) {
+@@ -779,6 +786,8 @@ void QSGRenderThread::syncAndRender()
+                 qWarning("Failed to end frame");
+             if (frameResult == QRhi::FrameOpDeviceLost || frameResult == QRhi::FrameOpSwapChainOutOfDate)
+                 QCoreApplication::postEvent(window, new QEvent(QEvent::Type(QQuickWindowPrivate::FullUpdateRequest)));
++            if (frameResult == QRhi::FrameOpSwapChainOutOfDate)
++                swapchainOutOfDate = true;
+         } else {
+             lastCompletedGpuTime = cd->swapchain->currentFrameCommandBuffer()->lastCompletedGpuTime();
+         }
