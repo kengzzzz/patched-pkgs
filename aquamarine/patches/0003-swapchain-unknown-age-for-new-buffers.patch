@@ -1,0 +1,68 @@
+diff --git a/include/aquamarine/allocator/Swapchain.hpp b/include/aquamarine/allocator/Swapchain.hpp
+index 5f10f81..10a63fa 100644
+--- a/include/aquamarine/allocator/Swapchain.hpp
++++ b/include/aquamarine/allocator/Swapchain.hpp
+@@ -45,6 +45,8 @@ namespace Aquamarine {
+         Hyprutils::Memory::CWeakPointer<IBackendImplementation> backendImpl;
+         std::vector<Hyprutils::Memory::CSharedPointer<IBuffer>> buffers;
+         int                                                     lastAcquired = 0;
++        std::vector<bool>                                       fresh;
++        bool                                                    lastAcquireWasFresh = false;
+ 
+         friend class CGBMBuffer;
+     };
+diff --git a/src/allocator/Swapchain.cpp b/src/allocator/Swapchain.cpp
+index edc4aff..4ab9152 100644
+--- a/src/allocator/Swapchain.cpp
++++ b/src/allocator/Swapchain.cpp
+@@ -27,6 +27,7 @@ bool Aquamarine::CSwapchain::reconfigure(const SSwapchainOptions& options_) {
+         // clear the swapchain
+         allocator->getBackend()->log(AQ_LOG_DEBUG, "Swapchain: Clearing");
+         buffers.clear();
++        fresh.clear();
+         options = options_;
+         return true;
+     }
+@@ -65,8 +66,13 @@ SP<IBuffer> Aquamarine::CSwapchain::next(int* age) {
+ 
+     lastAcquired = (lastAcquired + 1) % options.length;
+ 
++    // a buffer that was never handed out has no content yet, so its age is unknown
++    lastAcquireWasFresh = (size_t)lastAcquired < fresh.size() && fresh.at(lastAcquired);
++    if (lastAcquireWasFresh)
++        fresh.at(lastAcquired) = false;
++
+     if (age)
+-        *age = options.length; // we always just rotate
++        *age = lastAcquireWasFresh ? 0 : options.length; // we always just rotate
+ 
+     return buffers.at(lastAcquired);
+ }
+@@ -90,6 +96,7 @@ bool Aquamarine::CSwapchain::fullReconfigure(const SSwapchainOptions& options_)
+     }
+ 
+     buffers = std::move(bfs);
++    fresh.assign(buffers.size(), true);
+ 
+     return true;
+ }
+@@ -115,6 +122,8 @@ bool Aquamarine::CSwapchain::resize(size_t newSize) {
+         }
+     }
+ 
++    fresh.resize(buffers.size(), true);
++
+     return true;
+ }
+ 
+@@ -127,6 +136,10 @@ const SSwapchainOptions& Aquamarine::CSwapchain::currentOptions() {
+ }
+ 
+ void Aquamarine::CSwapchain::rollback() {
++    if (lastAcquireWasFresh && (size_t)lastAcquired < fresh.size())
++        fresh.at(lastAcquired) = true;
++    lastAcquireWasFresh = false;
++
+     lastAcquired--;
+     if (lastAcquired < 0)
+         lastAcquired = options.length - 1;

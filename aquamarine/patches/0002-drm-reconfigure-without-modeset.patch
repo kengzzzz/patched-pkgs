@@ -1,0 +1,93 @@
+diff --git a/src/backend/drm/DRM.cpp b/src/backend/drm/DRM.cpp
+index 69ff4c0..c9419cf 100644
+--- a/src/backend/drm/DRM.cpp
++++ b/src/backend/drm/DRM.cpp
+@@ -61,6 +61,44 @@ static bool shouldSubmitCTM(SP<SDRMConnector> connector, const COutputState::SIn
+     return connector->crtc->props.values.ctm && !connector->crtc->atomic.ctmStateKnown;
+ }
+ 
++static int formatDepth(uint32_t format) {
++    switch (format) {
++        case DRM_FORMAT_XRGB8888:
++        case DRM_FORMAT_XBGR8888:
++        case DRM_FORMAT_RGBX8888:
++        case DRM_FORMAT_BGRX8888:
++        case DRM_FORMAT_ARGB8888:
++        case DRM_FORMAT_ABGR8888:
++        case DRM_FORMAT_RGBA8888:
++        case DRM_FORMAT_BGRA8888: return 8;
++
++        case DRM_FORMAT_XRGB2101010:
++        case DRM_FORMAT_XBGR2101010:
++        case DRM_FORMAT_RGBX1010102:
++        case DRM_FORMAT_BGRX1010102:
++        case DRM_FORMAT_ARGB2101010:
++        case DRM_FORMAT_ABGR2101010:
++        case DRM_FORMAT_RGBA1010102:
++        case DRM_FORMAT_BGRA1010102: return 10;
++
++        default: return 0;
++    }
++}
++
++// max_bpc follows the buffer's bit depth, and changing it needs a modeset. Without max_bpc the depth doesn't matter.
++static bool formatChangeKeepsMaxBpc(SP<SDRMConnector> connector, uint32_t format) {
++    if (!connector->props.values.max_bpc || !connector->maxBpcBounds.at(0) || !connector->maxBpcBounds.at(1) || connector->maxBpcFailed)
++        return true;
++
++    const auto& FRONT = connector->crtc->primary->front;
++    const auto  BUF   = FRONT && !FRONT->dead ? FRONT->buffer.lock() : nullptr;
++    if (!BUF)
++        return false;
++
++    const auto ATTRS = BUF->dmabuf();
++    return ATTRS.success && formatDepth(ATTRS.format) != 0 && formatDepth(ATTRS.format) == formatDepth(format);
++}
++
+ Aquamarine::CDRMBackend::CDRMBackend(SP<CBackend> backend_) : backend(backend_) {
+     listeners.sessionActivate = backend->session->events.changeActive.listen([this] {
+         if (backend->session->active) {
+@@ -2580,6 +2618,13 @@ bool Aquamarine::CDRMOutput::commitState(bool onlyTest) {
+     // which may result in some glitches
+     const bool NEEDS_RECONFIG = SNAPSHOT.needsReconfig();
+ 
++    // A new format that keeps max_bpc, or new HDR metadata, may only need a flip with a buffer. Try it without a
++    // modeset first, the retry below modesets if the driver rejects it.
++    const bool NO_MODESET_RECONFIG = NEEDS_RECONFIG && STATE.enabled && !lastCommitNoBuffer && (COMMITTED & COutputState::eOutputStateProperties::AQ_OUTPUT_STATE_BUFFER) &&
++        !(COMMITTED & (COutputState::AQ_OUTPUT_STATE_ENABLED | COutputState::AQ_OUTPUT_STATE_MODE | COutputState::AQ_OUTPUT_STATE_WCG)) &&
++        !connector->sched.frameInFlight() && !connector->commitTainted && formatChangeKeepsMaxBpc(connector, STATE.drmFormat);
++    const bool MODESET = NEEDS_RECONFIG && !NO_MODESET_RECONFIG;
++
+     const bool BLOCKING = NEEDS_RECONFIG || !(COMMITTED & COutputState::eOutputStateProperties::AQ_OUTPUT_STATE_BUFFER);
+ 
+     const auto MODE = STATE.mode ? STATE.mode : STATE.customMode;
+@@ -2590,7 +2635,9 @@ bool Aquamarine::CDRMOutput::commitState(bool onlyTest) {
+     uint32_t flags = 0;
+ 
+     if (!onlyTest) {
+-        if (NEEDS_RECONFIG) {
++        if (NO_MODESET_RECONFIG)
++            backend->backend->log(AQ_LOG_DEBUG, std::format("drm: Reconfiguring {} without a modeset, format {}", name, fourccToName(STATE.drmFormat)));
++        else if (NEEDS_RECONFIG) {
+             if (STATE.enabled)
+                 backend->backend->log(AQ_LOG_DEBUG,
+                                       std::format("drm: Modesetting {} with {}x{}@{:.2f}Hz", name, (int)MODE->pixelSize.x, (int)MODE->pixelSize.y, MODE->refreshRate / 1000.F));
+@@ -2751,7 +2798,7 @@ bool Aquamarine::CDRMOutput::commitState(bool onlyTest) {
+         data.hdrMetadata = STATE.hdrMetadata;
+ 
+     data.blocking  = BLOCKING || formatMismatch;
+-    data.modeset   = NEEDS_RECONFIG || lastCommitNoBuffer || formatMismatch;
++    data.modeset   = MODESET || lastCommitNoBuffer || formatMismatch;
+     data.flags     = flags;
+     data.test      = onlyTest;
+     data.enabled   = STATE.enabled;
+@@ -2793,6 +2840,9 @@ bool Aquamarine::CDRMOutput::commitState(bool onlyTest) {
+         swapchain->rollback();
+ 
+     if (!ok && !data.modeset && !connector->commitTainted) {
++        if (NO_MODESET_RECONFIG && !onlyTest)
++            backend->backend->log(AQ_LOG_DEBUG, std::format("drm: Reconfiguring {} without a modeset failed, modesetting", name));
++
+         // attempt to re-modeset, however, flip a tainted flag if the modesetting fails
+         // to avoid doing this over and over.
+         data.modeset  = true;
