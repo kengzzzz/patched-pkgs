@@ -1,0 +1,233 @@
+diff --git a/src/output/Monitor.cpp b/src/output/Monitor.cpp
+index f76f73c..c1f5a35 100644
+--- a/src/output/Monitor.cpp
++++ b/src/output/Monitor.cpp
+@@ -803,6 +803,9 @@ bool CMonitor::applyMonitorRule(Config::CMonitorRule&& pMonitorRule) {
+     m_customDrmMode = {};
+     m_currentMode   = nullptr;
+ 
++    if (m_scanoutFormatKept)
++        restoreFormatAfterDS();
++
+     const auto initialFormat = m_drmFormat != DRM_FORMAT_INVALID ? m_drmFormat : DRM_FORMAT_XRGB8888;
+     m_output->state->setFormat(initialFormat);
+     m_prevDrmFormat = m_drmFormat;
+@@ -931,6 +934,9 @@ bool CMonitor::applyMonitorRule(Config::CMonitorRule&& pMonitorRule) {
+ 
+     m_enabled10bit = set10bit;
+ 
++    // leaving a direct scanout restores this format
++    m_prevDrmFormat = m_drmFormat;
++
+     if (autoScale)
+         m_scale = getDefaultScale();
+     else
+@@ -2057,8 +2063,8 @@ bool CMonitor::attemptDirectScanout() {
+     // FIXME: make sure the buffer actually follows the available scanout dmabuf formats
+     // and comes from the appropriate device. This may implode on multi-gpu!!
+ 
+-    // entering into scanout, so save monitor format
+-    if (m_lastScanout.expired())
++    // entering into scanout, so save monitor format. A kept format is not the monitor's.
++    if (m_lastScanout.expired() && !m_scanoutFormatKept)
+         m_prevDrmFormat = m_drmFormat;
+ 
+     const auto  previousFormat           = m_drmFormat;
+@@ -2161,19 +2167,61 @@ bool CMonitor::attemptDirectScanout() {
+     return true;
+ }
+ 
++// RGB formats the renderer draws into like the monitor's own
++static bool canKeepScanoutFormat(uint32_t format) {
++    switch (format) {
++        case DRM_FORMAT_XRGB8888:
++        case DRM_FORMAT_ARGB8888:
++        case DRM_FORMAT_XBGR8888:
++        case DRM_FORMAT_ABGR8888:
++        case DRM_FORMAT_XRGB2101010:
++        case DRM_FORMAT_ARGB2101010:
++        case DRM_FORMAT_XBGR2101010:
++        case DRM_FORMAT_ABGR2101010: return true;
++        case DRM_FORMAT_XBGR16161616F:
++        case DRM_FORMAT_ABGR16161616F: return g_pHyprRenderer->fp16Supported();
++        default: return false;
++    }
++}
++
+ void CMonitor::handleDSleave() {
+     LOG(Log::DEBUG, "Left a direct scanout.");
++    const auto LASTSCANOUT = m_lastScanout.lock();
+     m_lastScanout.reset();
+     m_previousFSWindow.reset(); // recalc fs settings
+     m_directScanoutIsActive = false;
+ 
++    // a window that is still fullscreen is only composited for a while, e.g. under an OSD. Keeping its format
++    // means the swapchain isn't reallocated when compositing starts and again when scanout resumes.
++    if (LASTSCANOUT && canKeepScanoutFormat(m_drmFormat) && LASTSCANOUT == Fullscreen::controller()->getFullscreenWindow(m_self.lock())) {
++        m_scanoutFormatWindow = LASTSCANOUT;
++        m_scanoutFormatKept   = true;
++    } else
++        restoreFormatAfterDS();
++
++    m_blurFBDirty = true;
++    m_damage.damageEntire();
++}
++
++void CMonitor::checkKeptScanoutFormat() {
++    const auto WINDOW = m_scanoutFormatWindow.lock();
++    if (WINDOW && WINDOW == Fullscreen::controller()->getFullscreenWindow(m_self.lock()))
++        return;
++
++    restoreFormatAfterDS();
++    m_blurFBDirty = true;
++    m_damage.damageEntire();
++}
++
++void CMonitor::restoreFormatAfterDS() {
++    m_scanoutFormatWindow.reset();
++    m_scanoutFormatKept = false;
++
+     // reset DRM format, but only if needed since it might modeset
+     if (m_output->state->state().drmFormat != m_prevDrmFormat)
+         m_output->state->setFormat(m_prevDrmFormat);
+ 
+-    m_drmFormat   = m_prevDrmFormat;
+-    m_blurFBDirty = true;
+-    m_damage.damageEntire();
++    m_drmFormat = m_prevDrmFormat;
+ }
+ 
+ bool CMonitor::canAttemptDirectScanoutFast() const {
+@@ -2449,7 +2497,8 @@ NColorManagement::PImageDescription CMonitor::getHDRImageDescription(NCMType::eC
+ uint32_t CMonitor::getPreferredReadFormat() {
+     static const auto PFORCE8BIT = CConfigValue<Config::INTEGER>("misc:screencopy_force_8b");
+ 
+-    auto              monFmt = m_output->state->state().drmFormat;
++    // while the output holds a client's format, capture clients get the monitor's own
++    auto monFmt = (m_scanoutFormatKept || !m_lastScanout.expired()) ? m_prevDrmFormat : m_output->state->state().drmFormat;
+ 
+     if (*PFORCE8BIT)
+         if (monFmt == DRM_FORMAT_BGRA1010102 || monFmt == DRM_FORMAT_ARGB2101010 || monFmt == DRM_FORMAT_XRGB2101010 || monFmt == DRM_FORMAT_BGRX1010102 ||
+diff --git a/src/output/Monitor.hpp b/src/output/Monitor.hpp
+index c37e48c..bb6943d 100644
+--- a/src/output/Monitor.hpp
++++ b/src/output/Monitor.hpp
+@@ -154,6 +154,9 @@ namespace Monitor {
+         PHLWINDOWREF m_lastScanout;
+         bool m_directScanoutIsActive    = false; // for cleanup logic. m_lastScanout.expired() can become true before the DS cleanup if client crashes/exits while DS is active.
+         bool m_scanoutNeedsCursorUpdate = false;
++        // while the last scanout window stays fullscreen, composited frames keep its format
++        PHLWINDOWREF m_scanoutFormatWindow;
++        bool         m_scanoutFormatKept = false;
+ 
+         // for special fade/blur
+         PHLANIMVAR<float> m_specialFade;
+@@ -283,6 +286,8 @@ namespace Monitor {
+         uint16_t     isDSBlocked(bool full = false);
+         bool         attemptDirectScanout();
+         void         handleDSleave();
++        void         checkKeptScanoutFormat();
++        void         restoreFormatAfterDS();
+         bool         canAttemptDirectScanoutFast() const;
+         bool         isMultiGPU();
+         void         setCTM(const Mat3x3& ctm);
+diff --git a/src/output/OutputCommitCoordinator.cpp b/src/output/OutputCommitCoordinator.cpp
+index 1338270..029852d 100644
+--- a/src/output/OutputCommitCoordinator.cpp
++++ b/src/output/OutputCommitCoordinator.cpp
+@@ -237,6 +237,10 @@ void COutputCommitCoordinator::failed(SFrame&& frame, bool rollbackSwapchain) {
+         m_monitor->m_previousFSWindow.reset();
+     }
+ 
++    // the output may reject the kept format, so the next composited frame restores the monitor's own before it draws
++    if (frame.kind == FRAME_COMPOSED && m_monitor->m_scanoutFormatKept)
++        m_monitor->m_scanoutFormatWindow.reset();
++
+     m_monitor->m_tearingState.busy = false;
+     m_monitor->m_damage.damageEntire();
+     scheduleRecovery();
+diff --git a/src/render/Renderer.cpp b/src/render/Renderer.cpp
+index 7013673..4da6927 100644
+--- a/src/render/Renderer.cpp
++++ b/src/render/Renderer.cpp
+@@ -1912,6 +1912,11 @@ bool IHyprRenderer::beginRender(PHLMONITOR pMonitor, CRegion& damage, eRenderMod
+     int bufferAge = 0;
+ 
+     if (!buffer) {
++        // commit() replaces a buffer in an outdated format with an undrawn one, so match the output format first
++        if (!pMonitor->m_state.updateSwapchain()) {
++            LOG(Log::ERR, "Failed to reconfigure the swapchain for {}", pMonitor->m_name);
++            return false;
++        }
+         m_context.m_currentBuffer = pMonitor->m_output->swapchain->next(&bufferAge);
+         if (!m_context.m_currentBuffer) {
+             LOG(Log::ERR, "Failed to acquire swapchain buffer for {}", pMonitor->m_name);
+@@ -2335,6 +2340,9 @@ void IHyprRenderer::renderMonitor(PHLMONITOR pMonitor, bool commit) {
+             pMonitor->handleDSleave();
+     }
+ 
++    if (pMonitor->m_scanoutFormatKept)
++        pMonitor->checkKeptScanoutFormat();
++
+     Event::bus()->m_events.render.pre.emit(pMonitor);
+ 
+     const auto NOW = Time::steadyNow();
+@@ -2385,6 +2393,11 @@ void IHyprRenderer::renderMonitor(PHLMONITOR pMonitor, bool commit) {
+     std::optional<Monitor::CDamageRing::CTransaction> damageTransaction;
+     if (!beginRender(pMonitor, damage, RENDER_MODE_NORMAL, {}, nullptr, false, renderOptions, &damageTransaction)) {
+         LOG(Log::ERR, "renderer: couldn't beginRender()!");
++        // the renderer may not draw into the kept scanout format, so the next frame restores the monitor's own
++        if (pMonitor->m_scanoutFormatKept) {
++            pMonitor->m_scanoutFormatWindow.reset();
++            pMonitor->scheduleFrame(Aquamarine::IOutput::AQ_SCHEDULE_RENDER_MONITOR);
++        }
+         return;
+     }
+     bool              finishing = false;
+@@ -2593,7 +2606,8 @@ void IHyprRenderer::handleFullscreenSettings(PHLMONITOR pMonitor) {
+         // HDR scRGB - monitor settings
+         // HDR PQ surface & DS is active - surface settings
+ 
+-        bool hdrIsHandled = false;
++        bool hdrIsHandled             = false;
++        bool surfaceMetadataIsCurrent = false;
+         if (FULLSCREEN_WINDOW) {
+             const auto ROOT_SURF = FULLSCREEN_WINDOW->wlSurface()->resource();
+             const auto SURF      = ROOT_SURF->findWithCM();
+@@ -2602,6 +2616,9 @@ void IHyprRenderer::handleFullscreenSettings(PHLMONITOR pMonitor) {
+             if (SURF && SURF->m_colorManagement.valid() && SURF->m_colorManagement->hasImageDescription()) {
+                 const bool surfaceIsHDR = SURF->m_colorManagement->isHDR();
+                 wantHDR                 = *PAUTOHDR && surfaceIsHDR;
++                if (pMonitor->m_scanoutFormatKept && pMonitor->m_lastScanout.expired())
++                    surfaceMetadataIsCurrent = surfaceIsHDR && !SURF->m_colorManagement->isWindowsScRGB() && !SURF->m_colorManagement->needsHdrMetadataUpdate() &&
++                        hdrMetadataEqual(SURF->m_colorManagement->hdrMetadata(), pMonitor->m_output->state->state().hdrMetadata);
+                 if (FULLSCREEN_WINDOW && FULLSCREEN_WINDOW->m_ruleApplicator->noAutoHDR().valueOrDefault())
+                     wantHDR = configuredHDR;
+                 if (surfaceIsHDR && !SURF->m_colorManagement->isWindowsScRGB() && !pMonitor->m_lastScanout.expired()) {
+@@ -2613,8 +2630,11 @@ void IHyprRenderer::handleFullscreenSettings(PHLMONITOR pMonitor) {
+                         SURF->m_colorManagement->setHDRMetadata(createHDRMetadata(SURF->m_colorManagement->imageDescription(), pMonitor));
+                     }
+                     if (needsHdrMetadataUpdate) {
+-                        LOG(Log::INFO, "[CM] Updating HDR metadata from surface");
+-                        pMonitor->m_output->state->setHDRMetadata(SURF->m_colorManagement->hdrMetadata());
++                        // setting the same metadata again still reconfigures the output, which modesets
++                        if (!hdrMetadataEqual(SURF->m_colorManagement->hdrMetadata(), pMonitor->m_output->state->state().hdrMetadata)) {
++                            LOG(Log::INFO, "[CM] Updating HDR metadata from surface");
++                            pMonitor->m_output->state->setHDRMetadata(SURF->m_colorManagement->hdrMetadata());
++                        }
+                         pMonitor->m_hdrMetadataFromSurface = true;
+                     }
+                     hdrIsHandled               = true;
+@@ -2646,7 +2666,11 @@ void IHyprRenderer::handleFullscreenSettings(PHLMONITOR pMonitor) {
+             const bool INITIAL_SDR          = !pMonitor->m_needsHDRupdate && !wantHDR;
+             const bool HDR_METADATA_CHANGED = wantHDR && !hdrMetadataEqual(WANTED, CURRENT);
+ 
+-            if (HDR_CHANGED || INITIAL_SDR || pMonitor->m_hdrMetadataFromSurface || HDR_METADATA_CHANGED) {
++            // a window composited in its kept scanout format, e.g. under an OSD, keeps its HDR metadata too while it is current and the output stays PQ
++            const bool KEEP_SURFACE_METADATA =
++                pMonitor->m_scanoutFormatKept && pMonitor->m_hdrMetadataFromSurface && surfaceMetadataIsCurrent && wantHDR && !HDR_CHANGED && WANTED.hdmi_metadata_type1.eotf == 2;
++
++            if (!KEEP_SURFACE_METADATA && (HDR_CHANGED || INITIAL_SDR || pMonitor->m_hdrMetadataFromSurface || HDR_METADATA_CHANGED)) {
+                 LOG(Log::INFO, wantHDR ? "[CM] Updating HDR metadata from monitor" : "[CM] Restoring SDR mode");
+                 pMonitor->m_output->state->setHDRMetadata(WANTED);
+                 pMonitor->m_hdrMetadataFromSurface = false;

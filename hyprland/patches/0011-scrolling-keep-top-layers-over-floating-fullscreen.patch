@@ -1,0 +1,34 @@
+diff --git a/src/layout/algorithm/tiled/scrolling/ScrollingFullscreenHandler.cpp b/src/layout/algorithm/tiled/scrolling/ScrollingFullscreenHandler.cpp
+index d2fe50f..ca72e4f 100644
+--- a/src/layout/algorithm/tiled/scrolling/ScrollingFullscreenHandler.cpp
++++ b/src/layout/algorithm/tiled/scrolling/ScrollingFullscreenHandler.cpp
+@@ -329,7 +329,7 @@ void CScrollingFullscreenHandler::setNoMembersAboveFullscreen(const std::optiona
+ 
+     // This should be in sync with default FS handling of setting all members below FS (IFullscreenHandler::setNoMembersAboveFullscreen())
+     // For simply setting or unsetting no members above the FS window without scrolling specific logic
+-    const auto setNoMembersAboveFS_layoutUnaware = [&](const bool SET) {
++    const auto setNoMembersAboveFS_layoutUnaware = [&](const bool SET, const bool HIDE_LAYERS = true) {
+         if (!getSpace() || !getSpace()->workspace() || !getSpace()->workspace()->m_monitor)
+             return;
+ 
+@@ -344,6 +344,9 @@ void CScrollingFullscreenHandler::setNoMembersAboveFullscreen(const std::optiona
+             }
+         }
+ 
++        if (!HIDE_LAYERS)
++            return;
++
+         // Hide the top layer window when fullscreening a window
+         for (auto const& ls : Desktop::layerState()->layers()) {
+             if (ls->m_monitor != MONITOR)
+@@ -402,7 +405,9 @@ void CScrollingFullscreenHandler::setNoMembersAboveFullscreen(const std::optiona
+         LOG(Log::WARN, "non-scroll-handled FS window called CScrollingFullscreenHandler::setNoMembersAboveFullscreen(). This is a bug, but is not fatal. Recovering...");
+ 
+         clear_hiddenFloatingWindowsUnderFSWindow();
+-        setNoMembersAboveFS_layoutUnaware(true);
++        // The default handler hid the top layers when the window went fullscreen. This runs on every recalc,
++        // so hiding them again would also hide layers mapped above the window since, like notifications.
++        setNoMembersAboveFS_layoutUnaware(true, false);
+         return;
+     }
+ 

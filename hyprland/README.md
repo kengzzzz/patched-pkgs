@@ -1,6 +1,6 @@
 # hyprland
 
-Hyprland 0.57.0 with nine patches. The numbers carry over from earlier
+Hyprland 0.57.0 with twelve patches. The numbers carry over from earlier
 releases. 0002, a backport of the tearing fix in upstream PR
 [#16572](https://github.com/hyprwm/Hyprland/pull/16572), was dropped because
 0.57.0 includes it.
@@ -89,9 +89,9 @@ SDR metadata to the display. Hyprland kept compositing for the PQ image
 description, so the panel showed PQ pixels as SDR and colors were wrong.
 
 The patch keeps the configured HDR metadata whenever the frame is composited.
-An SDR buffer that is scanned out directly still gets SDR metadata. Auto HDR
-also no longer changes the CM type of a monitor configured for HDR, so `hdr`
-and `hdredid` stay as set. Monitors configured for SDR behave as before. It
+A surface with an SDR image description that is scanned out directly still
+gets SDR metadata. Auto HDR also no longer changes the CM type of a monitor
+configured for HDR, so `hdr` and `hdredid` stay as set. Monitors configured for SDR behave as before. It
 changes only `src/render/Renderer.cpp`.
 
 Drop this patch when upstream stops sending SDR metadata for composited
@@ -164,6 +164,80 @@ vsync setting. It changes only `src/protocols/TearingControl.cpp`.
 
 Drop this patch when upstream applies tearing hints from subsurfaces.
 
+## 0011: keep top layers over a floating fullscreen window on scrolling
+
+0009 only works while a top layer keeps the flag that allows it above the
+fullscreen window. On the scrolling layout, every layout recalculation with a
+floating fullscreen window clears that flag on all layers of the monitor.
+Mapping a layer schedules a recalculation, so a notification or an OSD lost
+the flag right after it mapped and stayed hidden behind the window.
+
+The default fullscreen handler already hides top layers when a window goes
+fullscreen. The patch stops the scrolling layout from hiding them again in
+that branch, so layers mapped later keep the flag. Windows are handled as
+before. It changes only
+`src/layout/algorithm/tiled/scrolling/ScrollingFullscreenHandler.cpp`.
+
+Drop this patch when upstream stops clearing layer flags on every
+recalculation with a floating fullscreen window.
+
+## 0012: keep a fullscreen window's format while it is composited
+
+Direct scanout puts the output in the format of the window's buffers. When a
+notification or an OSD covers the window, Hyprland composites again. It went
+back to its own format for that, and to the window's format again when the
+OSD faded. Each switch reallocated Hyprland's swapchain. For a window whose
+buffers use another format than Hyprland's, like a game in XB24 or a browser
+in AB24 against XR24, the screen went black for 2 to 3 refreshes when scanout
+resumed.
+
+The patch keeps the window's format for composited frames while the window
+stays fullscreen on the monitor, so an OSD changes neither the format nor the
+swapchain. Only 8 bit, 10 bit and half float RGB formats are kept, half float
+only when the GPU can render into it. In HDR, the window's own HDR metadata is
+kept along with its format, and Hyprland only sends metadata again when it
+changes, since every metadata change is a modeset. Hyprland goes back to its
+own format and metadata when the window leaves fullscreen or closes, when
+another window becomes fullscreen, when a composited commit fails and when a
+monitor rule is applied.
+
+It also fixes three problems on the same path:
+
+- The first composited frame after a format change was drawn into a buffer in
+  the old format, which the commit replaced with an empty buffer. Leaving
+  direct scanout showed one blank frame. Hyprland now matches the swapchain to
+  the output format before it draws.
+- A screenshot or screen share that started while the output used a window's
+  AB24 format failed. It now gets Hyprland's own format.
+- A monitor rule applied during direct scanout, like switching to 10 bit, was
+  undone when scanout ended.
+
+It changes `src/output/Monitor.cpp`, `src/output/Monitor.hpp`,
+`src/output/OutputCommitCoordinator.cpp` and `src/render/Renderer.cpp`.
+
+Drop this patch when upstream keeps the scanout format while a fullscreen
+window is briefly composited.
+
+## 0013: keep the configured HDR metadata for HDR fullscreen windows
+
+With a monitor set to `cm = "hdr"`, Hyprland sent the HDR metadata of a
+fullscreen window's surface while it scanned the window out directly, and the
+monitor's own metadata otherwise. Some displays blank for about a second on
+every metadata change, so entering or leaving fullscreen and switching
+workspaces blanked the screen. A browser in HDR sent fixed default values
+there, not data from the video, so the switch gained nothing.
+
+The patch keeps the monitor's metadata for surfaces with the PQ transfer
+function, in direct scanout too, while the monitor is configured for HDR. A
+client that sends real mastering data loses that hint, and the display
+handles highlights above its own peak without it. Surfaces with an SDR image
+description still get SDR metadata in direct scanout, and auto HDR still
+passes the surface's metadata through. The metadata part of 0012 then only
+matters for auto HDR. It changes only `src/render/Renderer.cpp`.
+
+Drop this patch when upstream can keep the monitor's HDR metadata for
+fullscreen windows.
+
 ## Validation
 
 Tested on 0.56.2 with an RTX 5080 and a 3440x1440 240 Hz QD-OLED, in SDR with
@@ -202,6 +276,25 @@ Tested on 0.57.0 with the same setup:
 - 0010: a game on Wine Wayland, with no window rule, set the tearing hint
   with its vsync off and cleared it when vsync was turned on. It stayed at
   240 fps either way because its visible hardware cursor blocks tearing.
+- 0009 and 0011 on the scrolling layout: a native Wayland game in floating
+  fullscreen with direct scanout and tearing. Each volume OSD showed above it,
+  blocked solitary for 2 to 4 seconds, and scanout and tearing resumed after
+  it faded.
+- 0012 with the aquamarine patches: about 14 OSD cycles over a fullscreen
+  browser video in AB24 and 5 over the same game in XB24. The output kept the
+  window's format under every OSD, the swapchain was never reallocated, and
+  the black frames on scanout resume were gone. In HDR the format and the HDR
+  metadata stayed under every OSD and screenshot, with no modeset.
+- 0013 in HDR with `cm_auto_hdr = 0`: a browser video entered and left
+  fullscreen, and its workspace was switched away and back. The connector's
+  HDR metadata stayed at the monitor's values the whole time, and the monitor
+  never blanked. Composited frames, like those under an OSD, looked a bit
+  darker than direct scanout because Hyprland tone-maps the video. A window
+  rule with `tonemap = "off"` removed the difference.
+- An SDR game in HDR: with the default `render.non_shader_cm`, Hyprland
+  scanned it out with SDR metadata, so the monitor left HDR while the game was
+  scanned out. With `non_shader_cm = "ondemand"`, the game stayed composited
+  and the monitor stayed in HDR, at a lower frame rate.
 
 ## References and diagnostics
 

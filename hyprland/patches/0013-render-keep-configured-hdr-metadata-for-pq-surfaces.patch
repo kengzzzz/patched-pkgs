@@ -1,0 +1,18 @@
+diff --git a/src/render/Renderer.cpp b/src/render/Renderer.cpp
+index 4da6927a..7916e9ed 100644
+--- a/src/render/Renderer.cpp
++++ b/src/render/Renderer.cpp
+@@ -2621,7 +2621,12 @@ void IHyprRenderer::handleFullscreenSettings(PHLMONITOR pMonitor) {
+                         hdrMetadataEqual(SURF->m_colorManagement->hdrMetadata(), pMonitor->m_output->state->state().hdrMetadata);
+                 if (FULLSCREEN_WINDOW && FULLSCREEN_WINDOW->m_ruleApplicator->noAutoHDR().valueOrDefault())
+                     wantHDR = configuredHDR;
+-                if (surfaceIsHDR && !SURF->m_colorManagement->isWindowsScRGB() && !pMonitor->m_lastScanout.expired()) {
++                // a monitor configured for HDR keeps its own metadata for PQ surfaces, some displays resync on every metadata change
++                const bool KEEP_MONITOR_METADATA = configuredHDR && SURF->m_colorManagement->imageDescription().transferFunction == CM_TRANSFER_FUNCTION_ST2084_PQ;
++                if (KEEP_MONITOR_METADATA) {
++                    wantHDR                            = true;
++                    pMonitor->m_hdrMetadataFromSurface = false;
++                } else if (surfaceIsHDR && !SURF->m_colorManagement->isWindowsScRGB() && !pMonitor->m_lastScanout.expired()) {
+                     // DS HDR
+                     bool needsHdrMetadataUpdate =
+                         SURF->m_colorManagement->needsHdrMetadataUpdate() || pMonitor->m_previousFSWindow != FULLSCREEN_WINDOW || pMonitor->m_needsHDRupdate;
