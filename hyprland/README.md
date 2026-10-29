@@ -302,10 +302,18 @@ Tested on 0.57.0 with the same setup:
   0001, with its full commit message.
 - `diagnostics/record-scanout.py <class>` records a 180 second scanout
   timeline from `hyprctl` for the windows with that class.
+- `diagnostics/record-overlay.py <monitor> [seconds]` logs the solitary,
+  scanout, tearing and format state and the above fullscreen flag of each
+  layer whenever one of them changes.
 - `diagnostics/capture-only.sh` takes a grim screenshot and saves the monitor
   state before and after it.
 - `diagnostics/collect-game-threads.sh <class>` dumps the threads of the
   window with that class with gdb, for example when it freezes. It needs sudo.
+- `diagnostics/capture-stalls.py <process> [game log]` samples Hyprland and
+  game thread states and `hyprctl` latency until Ctrl-C. When the game stops
+  using CPU, it saves the last 3 seconds. It shows whether Hyprland was
+  blocked in a commit, idle, or still rendering. The game log is copied on
+  every game exit.
 
 The scripts write their output next to themselves, and git ignores it.
 

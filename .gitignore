@@ -3,3 +3,4 @@ hyprland/diagnostics/*.txt
 hyprland/diagnostics/*.json
 hyprland/diagnostics/*.jsonl
 hyprland/diagnostics/*.png
+hyprland/diagnostics/stall-*/
