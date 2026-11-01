@@ -1,6 +1,6 @@
 # quickshell
 
-Quickshell 0.3.2 with two patches.
+Quickshell 0.3.2 with three patches.
 
 ## 0001: reconnect the Hyprland event socket
 
@@ -36,6 +36,30 @@ The patch:
 
 It applies only with `QSG_RHI_BACKEND=vulkan`. Set `QS_NO_SHARED_VK_DEVICE=1`
 to turn it off.
+
+## 0003: serialize theme icon access
+
+`QIcon` is not thread safe. Images with `asynchronous: true` run the icon
+provider on the pixmap reader thread, while synchronous images and
+`Quickshell.iconPath(name, true)` use `QIcon` on the GUI thread. When both reach
+the same icon, one thread can free state the other is using. Quickshell then
+crashes in `QPlatformPixmap::fromFile`, as a segfault or as
+`pure virtual method called`, or an icon fails to load.
+
+The patch adds one mutex for theme icons. It is held in the `image://icon`
+provider, in `Quickshell.iconPath(name, true)`, in `Quickshell.hasThemeIcon`
+and while rendering a tray icon. The provider also returns a deep copy, because
+a native size pixmap can share data with the icon engine.
+
+It does not cover:
+
+- `qsimage` and `qspixmap` URLs, which are tray icons and notification images.
+  Their handles belong to the GUI thread, so load them synchronously.
+- Qt's own theme change handling on the GUI thread, which clears the same icon
+  state without this mutex.
+
+Drop this patch when upstream serializes theme icon access or keeps it on the
+GUI thread.
 
 ## Build notes
 

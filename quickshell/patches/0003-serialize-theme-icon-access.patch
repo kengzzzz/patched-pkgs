@@ -1,0 +1,120 @@
+diff --git a/src/core/iconimageprovider.cpp b/src/core/iconimageprovider.cpp
+index 1dbe3e7..fb10861 100644
+--- a/src/core/iconimageprovider.cpp
++++ b/src/core/iconimageprovider.cpp
+@@ -4,6 +4,7 @@
+ #include <qcolor.h>
+ #include <qicon.h>
+ #include <qlogging.h>
++#include <qmutex.h>
+ #include <qpainter.h>
+ #include <qpixmap.h>
+ #include <qsize.h>
+@@ -30,13 +31,16 @@ IconImageProvider::requestPixmap(const QString& id, QSize* size, const QSize& re
+ 		}
+ 	}
+ 
++	auto lock = QMutexLocker(&IconImageProvider::iconMutex());
++
+ 	auto icon = QIcon::fromTheme(iconName);
+ 	if (icon.isNull() && !fallbackName.isEmpty()) icon = QIcon::fromTheme(fallbackName);
+ 	if (icon.isNull() && !path.isEmpty()) icon = QPixmap(path);
+ 
+ 	auto targetSize = requestedSize.isValid() ? requestedSize : QSize(100, 100);
+ 	if (targetSize.width() == 0 || targetSize.height() == 0) targetSize = QSize(2, 2);
+-	auto pixmap = icon.pixmap(targetSize.width(), targetSize.height());
++	// A native size pixmap can share its data with the icon engine after the lock is released.
++	auto pixmap = icon.pixmap(targetSize.width(), targetSize.height()).copy();
+ 
+ 	if (pixmap.isNull()) {
+ 		qWarning() << "Could not load icon" << id << "at size" << targetSize << "from request";
+@@ -47,6 +51,11 @@ IconImageProvider::requestPixmap(const QString& id, QSize* size, const QSize& re
+ 	return pixmap;
+ }
+ 
++QMutex& IconImageProvider::iconMutex() {
++	static QMutex mutex;
++	return mutex;
++}
++
+ QPixmap IconImageProvider::missingPixmap(const QSize& size) {
+ 	auto width = size.width() % 2 == 0 ? size.width() : size.width() + 1;
+ 	auto height = size.height() % 2 == 0 ? size.height() : size.height() + 1;
+diff --git a/src/core/iconimageprovider.hpp b/src/core/iconimageprovider.hpp
+index 57e2604..b338a1f 100644
+--- a/src/core/iconimageprovider.hpp
++++ b/src/core/iconimageprovider.hpp
+@@ -1,5 +1,6 @@
+ #pragma once
+ 
++#include <qmutex.h>
+ #include <qpixmap.h>
+ #include <qquickimageprovider.h>
+ 
+@@ -16,4 +17,8 @@ public:
+ 	    const QString& path = QString(),
+ 	    const QString& fallback = QString()
+ 	);
++
++	// QIcon is not thread safe, and async images run image providers on the pixmap
++	// reader thread. Hold this around every use of theme icons.
++	static QMutex& iconMutex();
+ };
+diff --git a/src/core/qmlglobal.cpp b/src/core/qmlglobal.cpp
+index 14991be..b606ab3 100644
+--- a/src/core/qmlglobal.cpp
++++ b/src/core/qmlglobal.cpp
+@@ -10,6 +10,7 @@
+ #include <qjsengine.h>
+ #include <qlist.h>
+ #include <qlogging.h>
++#include <qmutex.h>
+ #include <qobject.h>
+ #include <qprocess.h>
+ #include <qqmlcontext.h>
+@@ -335,7 +336,11 @@ QString QuickshellGlobal::iconPath(const QString& icon) {
+ }
+ 
+ QString QuickshellGlobal::iconPath(const QString& icon, bool check) {
+-	if (check && QIcon::fromTheme(icon).isNull()) return "";
++	if (check) {
++		auto lock = QMutexLocker(&IconImageProvider::iconMutex());
++		if (QIcon::fromTheme(icon).isNull()) return "";
++	}
++
+ 	return IconImageProvider::requestString(icon);
+ }
+ 
+@@ -343,7 +348,10 @@ QString QuickshellGlobal::iconPath(const QString& icon, const QString& fallback)
+ 	return IconImageProvider::requestString(icon, "", fallback);
+ }
+ 
+-bool QuickshellGlobal::hasThemeIcon(const QString& icon) { return QIcon::hasThemeIcon(icon); }
++bool QuickshellGlobal::hasThemeIcon(const QString& icon) {
++	auto lock = QMutexLocker(&IconImageProvider::iconMutex());
++	return QIcon::hasThemeIcon(icon);
++}
+ 
+ bool QuickshellGlobal::hasVersion(qint32 major, qint32 minor, const QStringList& features) {
+ 	return qs::scan::env::PreprocEnv::hasVersion(major, minor, features);
+diff --git a/src/services/status_notifier/item.cpp b/src/services/status_notifier/item.cpp
+index 67bde01..8892979 100644
+--- a/src/services/status_notifier/item.cpp
++++ b/src/services/status_notifier/item.cpp
+@@ -8,6 +8,7 @@
+ #include <qicon.h>
+ #include <qlogging.h>
+ #include <qloggingcategory.h>
++#include <qmutex.h>
+ #include <qnamespace.h>
+ #include <qobject.h>
+ #include <qpainter.h>
+@@ -136,6 +137,8 @@ bool StatusNotifierItem::isValid() const { return this->item->isValid(); }
+ bool StatusNotifierItem::isReady() const { return this->mReady; }
+ 
+ QPixmap StatusNotifierItem::createPixmap(const QSize& size) const {
++	auto lock = QMutexLocker(&IconImageProvider::iconMutex());
++
+ 	auto needsAttention = this->bStatus.value() == Status::NeedsAttention;
+ 
+ 	auto closestPixmap = [](const QSize& size, const DBusSniIconPixmapList& pixmaps) {
