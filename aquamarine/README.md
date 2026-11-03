@@ -1,6 +1,6 @@
 # aquamarine
 
-aquamarine 0.15.1 with three patches.
+aquamarine 0.16.0 with three patches.
 
 ## 0001: no async page flip on a modeset commit
 
@@ -32,13 +32,11 @@ or OSD appeared over a game and again when it left.
 
 When a commit changes only the format or the HDR metadata and carries a
 buffer, the patch first commits it as a plain page flip. If the driver rejects
-that, the existing retry modesets as before. On a connector with a `max_bpc`
-property, a change of bit depth, like 8 to 10 bits, still modesets, because
-`max_bpc` follows the bit depth. NVIDIA connectors have no `max_bpc`, and
-NVIDIA's driver applies HDR metadata without a modeset, so there both are
-tried as a page flip. Mode, enable and wide color changes still modeset. The
-change still flips on vblank, since async flips can't change the format. It
-changes only `src/backend/drm/DRM.cpp`.
+that, the existing retry modesets as before. A change of bit depth, like 8 to
+10 bits, is tried as a page flip too, since `max_bpc` no longer follows the
+buffer format. Mode, enable, wide color and `max_bpc` changes still modeset.
+The change still flips on vblank, since async flips can't change the format.
+It changes only `src/backend/drm/DRM.cpp`.
 
 Drop this patch when upstream stops modesetting for format and HDR metadata
 changes in `CDRMOutput::commitState`.
@@ -65,14 +63,19 @@ never acquired.
 
 ## Validation
 
-Tested with Hyprland 0.57.0 and the patches in this repo, on an RTX 5080 and
-a 3440x1440 240 Hz QD-OLED.
+Tested on aquamarine 0.15.1 and 0.16.0 with Hyprland 0.57.0 and the patches
+in this repo, on an RTX 5080 and a 3440x1440 240 Hz QD-OLED. HDR metadata
+changes were tested on 0.15.1 only.
 
-- 0001: see the 0007 entries in the Hyprland README.
+- 0001: see the 0007 entries in the Hyprland README. On 0.16.0, a native game
+  scanned out and tore at well over the refresh rate.
 - 0002: a native game switched between XB24 and XR24 16 times around OSDs,
   each time without a modeset and with no fallback. In HDR, entering and
   leaving fullscreen changed the format and the HDR metadata without a
-  modeset. The driver accepted every one of these commits.
+  modeset. The driver accepted every one of these commits. On 0.16.0,
+  workspace switches during a game, OSDs over a browser video and a 10-bit
+  video player going in and out of fullscreen on an 8-bit desktop changed the
+  format the same way, including 8 to 10 bits and back.
 - 0003: an OSD over a fullscreen browser video no longer blanked the video
   for over a second.
 

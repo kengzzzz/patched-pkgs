@@ -3,13 +3,13 @@ set -euo pipefail
 
 usage() {
     printf 'Usage: %s [--refresh] <package>\n' "${0##*/}" >&2
-    printf '  --refresh  re-run pacman -Syu in the dependency layer\n' >&2
+    printf '  --refresh  rebuild every layer, so pacman -Syu runs again\n' >&2
     exit 1
 }
 
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 refresh=()
-[[ ${1:-} == --refresh ]] && { refresh=(--no-cache-filter dependencies); shift; }
+[[ ${1:-} == --refresh ]] && { refresh=(--no-cache); shift; }
 [[ $# -eq 1 ]] || usage
 pkg=${1%/}
 dir=$root/$pkg
