@@ -9,3 +9,5 @@ hyprland/diagnostics/latency/live/scanout-*/
 hyprland/diagnostics/latency/live/composited-*/
 hyprland/diagnostics/latency/vm/work/
 hyprland/diagnostics/latency/vm/results-*/
+hyprland/diagnostics/smoke/results-*/
+hyprland/diagnostics/smoke/live-*/

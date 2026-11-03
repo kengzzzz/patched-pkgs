@@ -22,7 +22,7 @@ here installs a package or changes the running system.
   patches/       applied in name order with `git apply --index`
   README.md      what each patch fixes and how to roll back
   references/    hyprland only: original patch export
-  diagnostics/   hyprland only: scanout, freeze and latency scripts
+  diagnostics/   hyprland only: scanout, freeze, latency and smoke scripts
   dist/          build output, one directory per version (not tracked)
 ```
 

@@ -37,6 +37,7 @@ static struct {
     struct wl_pointer                    *pointer;
     struct xdg_wm_base                   *wm_base;
     struct zwp_linux_dmabuf_v1           *dmabuf;
+    uint32_t                              dmabuf_ver;
     struct wp_presentation               *presentation;
     struct zwlr_layer_shell_v1           *layer_shell;
     struct wp_tearing_control_manager_v1 *tearing;
@@ -123,8 +124,10 @@ static void registry_global(void *data, struct wl_registry *reg, uint32_t name, 
         wl_seat_add_listener(g.seat, &seat_listener, NULL);
     } else if (!strcmp(iface, xdg_wm_base_interface.name))
         g.wm_base = wl_registry_bind(reg, name, &xdg_wm_base_interface, 1);
-    else if (!strcmp(iface, zwp_linux_dmabuf_v1_interface.name) && ver >= 3)
-        g.dmabuf = wl_registry_bind(reg, name, &zwp_linux_dmabuf_v1_interface, 3);
+    else if (!strcmp(iface, zwp_linux_dmabuf_v1_interface.name) && ver >= 3) {
+        g.dmabuf_ver = ver < 4 ? ver : 4;
+        g.dmabuf     = wl_registry_bind(reg, name, &zwp_linux_dmabuf_v1_interface, g.dmabuf_ver);
+    }
     else if (!strcmp(iface, wp_presentation_interface.name))
         g.presentation = wl_registry_bind(reg, name, &wp_presentation_interface, 1);
     else if (!strcmp(iface, zwlr_layer_shell_v1_interface.name))
@@ -206,7 +209,64 @@ static struct {
     double                fps;
     uint64_t              frames, skipped;
     int                   udmabuf;
+    bool                  feedback;
+    int                   refeedback_ms;
+    uint64_t              next_refeedback_ns;
 } game;
+
+/* dmabuf feedback on the content surface. One line per done: whether any tranche had the scanout flag, and whether
+ * it was the object's first done, which shows what a feedback object created during scanout gets first. */
+
+static struct {
+    struct zwp_linux_dmabuf_feedback_v1 *obj;
+    int                                  id, dones, tranches;
+    bool                                 scanout;
+} dfb;
+
+static void dfb_done(void *data, struct zwp_linux_dmabuf_feedback_v1 *f) {
+    (void)data, (void)f;
+    fprintf(outf, "FB %lu %d first=%d scanout=%d tranches=%d\n", now_ns(), dfb.id, dfb.dones == 0, dfb.scanout, dfb.tranches);
+    dfb.dones++;
+    dfb.tranches = 0;
+    dfb.scanout  = false;
+}
+static void dfb_format_table(void *data, struct zwp_linux_dmabuf_feedback_v1 *f, int32_t fd, uint32_t size) {
+    (void)data, (void)f, (void)size;
+    close(fd);
+}
+static void dfb_main_device(void *data, struct zwp_linux_dmabuf_feedback_v1 *f, struct wl_array *dev) {
+    (void)data, (void)f, (void)dev;
+}
+static void dfb_tranche_done(void *data, struct zwp_linux_dmabuf_feedback_v1 *f) {
+    (void)data, (void)f;
+    dfb.tranches++;
+}
+static void dfb_tranche_target_device(void *data, struct zwp_linux_dmabuf_feedback_v1 *f, struct wl_array *dev) {
+    (void)data, (void)f, (void)dev;
+}
+static void dfb_tranche_formats(void *data, struct zwp_linux_dmabuf_feedback_v1 *f, struct wl_array *indices) {
+    (void)data, (void)f, (void)indices;
+}
+static void dfb_tranche_flags(void *data, struct zwp_linux_dmabuf_feedback_v1 *f, uint32_t flags) {
+    (void)data, (void)f;
+    if (flags & ZWP_LINUX_DMABUF_FEEDBACK_V1_TRANCHE_FLAGS_SCANOUT)
+        dfb.scanout = true;
+}
+
+static const struct zwp_linux_dmabuf_feedback_v1_listener dfb_listener = {
+    dfb_done, dfb_format_table, dfb_main_device, dfb_tranche_done, dfb_tranche_target_device, dfb_tranche_formats, dfb_tranche_flags,
+};
+
+static void dfb_create(void) {
+    if (dfb.obj)
+        zwp_linux_dmabuf_feedback_v1_destroy(dfb.obj);
+    dfb.id++;
+    dfb.dones    = 0;
+    dfb.tranches = 0;
+    dfb.scanout  = false;
+    dfb.obj      = zwp_linux_dmabuf_v1_get_surface_feedback(g.dmabuf, game.content);
+    zwp_linux_dmabuf_feedback_v1_add_listener(dfb.obj, &dfb_listener, NULL);
+}
 
 static void buf_release(void *data, struct wl_buffer *b);
 static void draw(void);
@@ -262,8 +322,12 @@ static struct wl_buffer *gbm_buffer(int w, int h, struct gbm_bo **out_bo) {
     if (map) {
         fill_pattern(map, w, h, mstride, game.black);
         gbm_bo_unmap(bo, mdata);
-    } else
-        fprintf(stderr, "abclient: gbm_bo_map failed, buffer content is undefined\n");
+    } else {
+        static bool warned;
+        if (!warned)
+            fprintf(stderr, "abclient: gbm_bo_map failed, buffer content is undefined\n");
+        warned = true;
+    }
 
     uint64_t                           mod    = gbm_bo_get_modifier(bo);
     int                                planes = gbm_bo_get_plane_count(bo);
@@ -452,6 +516,13 @@ static int run_game(void) {
     xdg_surface_add_listener(game.xs, &xs_listener, NULL);
     game.tl = xdg_surface_get_toplevel(game.xs);
     xdg_toplevel_add_listener(game.tl, &tl_listener, NULL);
+    if (game.feedback) {
+        if (g.dmabuf_ver < 4)
+            die("dmabuf feedback needs linux-dmabuf v4");
+        dfb_create();
+        game.next_refeedback_ns = now_ns() + (uint64_t)game.refeedback_ms * 1000000ull;
+    }
+
     xdg_toplevel_set_title(game.tl, "abgame");
     xdg_toplevel_set_app_id(game.tl, "abgame");
     if (game.fullscreen)
@@ -550,6 +621,14 @@ static uint32_t parse_format(const char *s) {
         return DRM_FORMAT_ARGB8888;
     if (!strcmp(s, "ab24"))
         return DRM_FORMAT_ABGR8888;
+    if (!strcmp(s, "xr30"))
+        return DRM_FORMAT_XRGB2101010;
+    if (!strcmp(s, "xb30"))
+        return DRM_FORMAT_XBGR2101010;
+    if (!strcmp(s, "ar30"))
+        return DRM_FORMAT_ARGB2101010;
+    if (!strcmp(s, "ab30"))
+        return DRM_FORMAT_ABGR2101010;
     fprintf(stderr, "unknown format %s\n", s);
     exit(2);
 }
@@ -576,7 +655,7 @@ int main(int argc, char **argv) {
         {"tear", no_argument, 0, 't'},           {"full-damage", no_argument, 0, 'D'}, {"gbm", required_argument, 0, 'g'},  {"shm", no_argument, 0, 'm'},
         {"fps", required_argument, 0, 'r'},      {"seconds", required_argument, 0, 'S'}, {"layer", required_argument, 0, 'l'}, {"on", required_argument, 0, 'o'},
         {"off", required_argument, 0, 'O'},      {"cycles", required_argument, 0, 'c'}, {"delay", required_argument, 0, 'd'}, {"log", required_argument, 0, 'L'},
-        {0, 0, 0, 0}};
+        {"feedback", no_argument, 0, 'k'},       {"refeedback", required_argument, 0, 'K'}, {0, 0, 0, 0}};
     int c;
     optind = 2;
     while ((c = getopt_long(argc, argv, "", opts, NULL)) != -1) {
@@ -596,6 +675,11 @@ int main(int argc, char **argv) {
             case 'O': osd.off_ms = atoi(optarg); break;
             case 'c': osd.cycles = atoi(optarg); break;
             case 'd': osd.delay_ms = atoi(optarg); break;
+            case 'k': game.feedback = true; break;
+            case 'K':
+                game.feedback      = true;
+                game.refeedback_ms = atoi(optarg);
+                break;
             case 'L':
                 outf = fopen(optarg, "w");
                 if (!outf)
@@ -656,6 +740,10 @@ int main(int argc, char **argv) {
         }
         if (!is_game)
             osd_tick();
+        else if (game.refeedback_ms > 0 && now_ns() >= game.next_refeedback_ns) {
+            dfb_create();
+            game.next_refeedback_ns = now_ns() + (uint64_t)game.refeedback_ms * 1000000ull;
+        }
     }
     if (!is_game && osd.surface)
         osd_hide();

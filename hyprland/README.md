@@ -403,6 +403,11 @@ Tested on 0.57.0 with the same setup:
   every displayed frame and the CPU instructions per frame. The guest has
   no async page flips or HDR metadata, so tearing and HDR need the live
   test. The results are in `diagnostics/latency/RESULTS.md`.
+- `diagnostics/smoke/vm.sh` runs scanout, feedback, OSD and output checks on
+  stock and patched builds in that VM. Run it before installing.
+- `diagnostics/smoke/live.sh` checks tearing, OSDs and GPU buffers on the
+  running session in about a minute. Run it after installing. HDR (0006,
+  0013, 0014) still needs a manual check.
 
 The scripts write their output next to themselves, and git ignores it.
 
