@@ -88,7 +88,9 @@ again. `sudo pacman -S <name>` goes back to the unpatched repository package.
 
 ## Updating a package
 
-1. Check whether upstream already fixed the problem.
+1. Check whether upstream already fixed the problem. `./overlap.py <package>
+   <tag>` lists which patches no longer apply and which sit near upstream
+   changes.
 2. Set `UPSTREAM_REF`, `UPSTREAM_COMMIT`, `PKGVER` and `PKGREL`. Get the commit
    with `git ls-remote <url> 'refs/tags/<tag>*'`. For an annotated tag, use the
    line ending in `^{}`.
