@@ -1,29 +1,35 @@
 # hyprland
 
-Hyprland 0.57.0 with fourteen patches. The numbers carry over from earlier
+Hyprland 0.57.1 with fourteen patches. The numbers carry over from earlier
 releases. 0002, a backport of the tearing fix in upstream PR
 [#16572](https://github.com/hyprwm/Hyprland/pull/16572), was dropped because
 0.57.0 includes it.
 
 ## 0001: keep scanout dmabuf feedback for subsurfaces
 
-Taken from Rick Littel's commit
+Based on Rick Littel's commit
 [8edefed](https://github.com/Kuret/Hyprland/commit/8edefed837199c53f8652b991415d331ac571a04).
 
-When a window goes fullscreen, Hyprland sends the scanout tranche to only one
-dmabuf feedback object. That misses two cases:
+When a window goes fullscreen, Hyprland sends the scanout tranche to every
+dmabuf feedback object of the fullscreen surface. That misses three cases:
 
 - Wine renders into a subsurface, not the fullscreen surface.
 - NVIDIA's Vulkan driver creates a new feedback object every time it
-  recreates a swapchain.
+  recreates a swapchain. One created while the window is scanned out gets the
+  default tranche.
+- When an output is added or removed, Hyprland rebuilds the format table and
+  sends the default tranche to the feedback objects of subsurfaces.
 
 These clients then allocate buffers that can't be used for direct scanout.
 
-The patch tracks the surface tree of each scanout window and sends the tranche
-to every feedback object in it. New feedback objects get the scanout tranche
-first. It changes only `src/protocols/LinuxDMABUF.cpp` and
-`src/protocols/LinuxDMABUF.hpp`, and it does nothing unless
-`render.direct_scanout` is enabled.
+The patch tracks the root surface of each scanout window and sends the tranche
+to every feedback object under it. New feedback objects under it get the
+scanout tranche first, and a table rebuild keeps it. It changes only
+`src/protocols/LinuxDMABUF.cpp` and `src/protocols/LinuxDMABUF.hpp`, and it
+does nothing unless `render.direct_scanout` is enabled.
+
+Drop this patch when upstream sends the scanout tranche to subsurfaces and to
+feedback objects created during scanout.
 
 ## 0003: skip direct scanout for buffers KMS can't take
 
@@ -373,6 +379,10 @@ Tested on 0.57.0 with the same setup:
   top and overlay layers had the same alpha as without it, in and out of
   fullscreen. On the real monitor, a power cycle under a fullscreen terminal
   rebuilt the wallpaper's surface, and the wallpaper stayed visible.
+
+Tested on 0.57.1 with the same setup: both smoke scripts passed every check,
+and stock failed the VM checks for 0001 and 0012. A Vulkan client scanned out
+with `quirks:skip_non_kms_dmabuf_formats` off, the new default.
 
 ## References and diagnostics
 
