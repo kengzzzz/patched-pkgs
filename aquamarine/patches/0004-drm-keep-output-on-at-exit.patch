@@ -1,0 +1,24 @@
+diff --git a/src/backend/drm/DRM.cpp b/src/backend/drm/DRM.cpp
+index 62d822e..26253e7 100644
+--- a/src/backend/drm/DRM.cpp
++++ b/src/backend/drm/DRM.cpp
+@@ -384,6 +384,19 @@ Aquamarine::CDRMBackend::~CDRMBackend() {
+     stopCommitThread();
+ 
+     for (auto& conn : connectors) {
++        // Leave the output on at exit. Turning it off drops the link, and the
++        // display takes seconds to show the next picture. Close the on-screen
++        // FBs now so closing the fd can't remove them and blank the output.
++        if (conn->output && conn->output->enabledState) {
++            if (conn->crtc && conn->crtc->primary) {
++                if (conn->crtc->primary->front)
++                    conn->crtc->primary->front->drop();
++                if (conn->crtc->primary->back)
++                    conn->crtc->primary->back->drop();
++            }
++            conn->output->enabledState = false;
++            log(AQ_LOG_DEBUG, std::format("drm: Leaving output {} on at exit", conn->szName));
++        }
+         conn->disconnect();
+         conn.reset();
+     }

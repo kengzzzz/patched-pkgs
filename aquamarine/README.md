@@ -1,6 +1,6 @@
 # aquamarine
 
-aquamarine 0.16.0 with three patches.
+aquamarine 0.16.0 with five patches.
 
 ## 0001: no async page flip on a modeset commit
 
@@ -61,6 +61,53 @@ the library, so consumers don't need a rebuild.
 Drop this patch when upstream reports an unknown age for buffers that were
 never acquired.
 
+## 0004: leave outputs on at exit
+
+When the compositor exits cleanly, aquamarine turns every output off. The
+monitor loses its signal and can take several seconds to show the next
+picture, even when the console or the next compositor uses the same mode.
+With a greeter that runs its own compositor, every login stayed black that
+long.
+
+The patch skips this only when the DRM backend is destroyed. It closes the
+framebuffers on screen with CloseFB, so closing the DRM device can't remove
+them, and leaves the output on. The last frame, cursor included, stays until
+the console or the next compositor draws over it. Unplugged monitors and
+outputs disabled at runtime still turn off. It changes only
+`src/backend/drm/DRM.cpp`.
+
+The handoff is seamless only when the next DRM client uses the same mode on
+the same CRTC. A different mode still needs a modeset. After a crash, or on
+kernels without CloseFB, the kernel removes the framebuffer on screen, so the
+screen goes blank until the next client draws. NVIDIA without
+`nvidia-drm.fbdev=1` turns outputs off whenever the compositor releases the
+display, so the patch has no effect there. The next DRM client can read the
+last frame until it draws over it.
+
+If the kernel defers the console takeover and nothing has printed to the
+console yet, the console's framebuffer was never drawn. The kernel still puts
+it on screen when the compositor exits, so leftover video memory shows until
+the next compositor starts. Boot with `fbcon=nodefer` to avoid this.
+
+Drop this patch when upstream stops turning outputs off in the
+`CDRMBackend` destructor.
+
+## 0005: no HDR infoframe in SDR
+
+In SDR, Hyprland still hands aquamarine HDR metadata, all zeros. aquamarine
+turned it into a blob, so the driver sent an HDR infoframe that only says
+SDR. The console sends no HDR infoframe at all. Some monitors resync for a
+few seconds whenever that infoframe starts or stops, so starting a compositor
+from the console went black that long, even at the same mode.
+
+When the metadata is all zeros, the patch clears `HDR_OUTPUT_METADATA`
+instead of creating a blob, the same as the console. Any other metadata still
+gets a blob, so HDR on and off work as before. It changes only
+`src/backend/drm/impl/Atomic.cpp`.
+
+Drop this patch when upstream clears the property for empty metadata, or
+Hyprland stops sending empty metadata in SDR.
+
 ## Validation
 
 Tested on aquamarine 0.15.1 and 0.16.0 with Hyprland 0.57.0 and the patches
@@ -78,6 +125,18 @@ changes were tested on 0.15.1 only.
   format the same way, including 8 to 10 bits and back.
 - 0003: an OSD over a fullscreen browser video no longer blanked the video
   for over a second.
+- 0004: tested with Hyprland 0.57.1 on kernel 7.3.3 and NVIDIA 620.70.06
+  with `nvidia-drm.fbdev=1`. A compositor running the greeter's config, started
+  from a text console and closed with its exit bind, left the screen black for
+  about five seconds without the patch. With it, the console showed in under a
+  second. A real login went from the greeter to the desktop without the long
+  black screen.
+- 0005: tested with the same setup. A compositor running the greeter's config,
+  started from a text console at the same mode, changed the HDR infoframe and
+  left the screen black for a few seconds without the patch. With it, the
+  kernel saw no infoframe change and the picture came up in about a second. A
+  boot through the greeter and a login changed the infoframe zero times. HDR
+  on and off still switched the monitor in and out of HDR.
 
 ## Rollback
 
