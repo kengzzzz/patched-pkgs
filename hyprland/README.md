@@ -1,9 +1,11 @@
 # hyprland
 
-Hyprland 0.57.1 with fourteen patches. The numbers carry over from earlier
+Hyprland 0.57.2 with thirteen patches. The numbers carry over from earlier
 releases. 0002, a backport of the tearing fix in upstream PR
 [#16572](https://github.com/hyprwm/Hyprland/pull/16572), was dropped because
-0.57.0 includes it.
+0.57.0 includes it. 0015, a fade-in fix for layers that map under a fullscreen
+window, was dropped because 0.57.2 includes upstream PR
+[#16740](https://github.com/hyprwm/Hyprland/pull/16740).
 
 ## 0001: keep scanout dmabuf feedback for subsurfaces
 
@@ -287,25 +289,6 @@ It changes `src/render/shaders/glsl/cm_helpers.glsl`,
 Drop this patch when upstream converts blurred backgrounds and HDR surfaces
 for the SDR copy.
 
-## 0015: fade in lower layers that map under a fullscreen window
-
-Hyprland 0.57 skips the fade-in in `CLayerSurface::onMap` when a fullscreen
-window covers the monitor, unless the layer is allowed above that window.
-Fullscreen only fades the top layer back in, so a background or bottom layer
-that maps at that moment stays at alpha 0 on every workspace. A wallpaper
-client hits this after a monitor is powered off and on, because it creates a
-new surface when the output comes back.
-
-The patch always runs the fade-in for layers below top. They're drawn under
-the window, and one that mapped before the window went fullscreen is already
-at alpha 1. `CLayerSurface::onCommit` left a layer at alpha 0 the same way when
-a client moved it below top during fullscreen, so it now sets alpha 0 only on
-the top layer. Top and overlay layers behave as before. It changes only
-`src/desktop/view/LayerSurface.cpp`.
-
-Drop this patch when upstream fades in layers below top in
-`CLayerSurface::onMap`.
-
 ## Validation
 
 Tested on 0.56.2 with an RTX 5080 and a 3440x1440 240 Hz QD-OLED, in SDR with
@@ -372,17 +355,13 @@ Tested on 0.57.0 with the same setup:
   Without the patch, the browser's grays came out up to 85 levels brighter,
   and with SDR brightness 1.2 the terminal's background was darker and the
   glow was missing. SDR frames were the same with and without the patch.
-- 0015 in a nested session with a fullscreen window: a wallpaper client and
-  test clients mapped on each layer, and test clients moved between layers
-  with `set_layer`. Without the patch, every layer that ended below top stayed
-  at alpha 0 after leaving fullscreen. With it, they all reached alpha 1, and
-  top and overlay layers had the same alpha as without it, in and out of
-  fullscreen. On the real monitor, a power cycle under a fullscreen terminal
-  rebuilt the wallpaper's surface, and the wallpaper stayed visible.
 
 Tested on 0.57.1 with the same setup: both smoke scripts passed every check,
 and stock failed the VM checks for 0001 and 0012. A Vulkan client scanned out
 with `quirks:skip_non_kms_dmabuf_formats` off, the new default.
+
+Tested on 0.57.2 with the same setup: both smoke scripts passed every check,
+and stock failed the VM checks for 0001 and 0012.
 
 ## References and diagnostics
 

@@ -1,8 +1,8 @@
 diff --git a/src/output/Monitor.cpp b/src/output/Monitor.cpp
-index 26ef52b6..ad12f7d6 100644
+index dfb8e61e..2ba4972b 100644
 --- a/src/output/Monitor.cpp
 +++ b/src/output/Monitor.cpp
-@@ -2132,6 +2132,10 @@ bool CMonitor::attemptDirectScanout() {
+@@ -2134,6 +2134,10 @@ bool CMonitor::attemptDirectScanout() {
  
      scanoutCommitted = true;
  
@@ -14,10 +14,10 @@ index 26ef52b6..ad12f7d6 100644
  
      if (!PBUFFER->lockedByBackend || PBUFFER->m_hlEvents.backendRelease)
 diff --git a/src/render/Renderer.cpp b/src/render/Renderer.cpp
-index a9efcd13..70136737 100644
+index aa5b81dd..824b9659 100644
 --- a/src/render/Renderer.cpp
 +++ b/src/render/Renderer.cpp
-@@ -2312,6 +2312,13 @@ void IHyprRenderer::renderMonitor(PHLMONITOR pMonitor, bool commit) {
+@@ -2315,6 +2315,13 @@ void IHyprRenderer::renderMonitor(PHLMONITOR pMonitor, bool commit) {
          return;
      }
  
@@ -28,6 +28,6 @@ index a9efcd13..70136737 100644
 +        return;
 +    }
 +
-     // tearing and DS first
-     bool       shouldTear              = pMonitor->updateTearing();
-     const bool canAttemptDirectScanout = pMonitor->canAttemptDirectScanoutFast();
+     if (*PDEBUGOVERLAY == 1)
+         Debug::overlay()->frameData(pMonitor);
+ 
