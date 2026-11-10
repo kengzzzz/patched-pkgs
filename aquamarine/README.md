@@ -102,7 +102,8 @@ from the console went black that long, even at the same mode.
 
 When the metadata is all zeros, the patch clears `HDR_OUTPUT_METADATA`
 instead of creating a blob, the same as the console. Any other metadata still
-gets a blob, so HDR on and off work as before. It changes only
+gets a blob. Turning HDR off in a session now stops the infoframe too,
+instead of sending one that says SDR. It changes only
 `src/backend/drm/impl/Atomic.cpp`.
 
 Drop this patch when upstream clears the property for empty metadata, or
