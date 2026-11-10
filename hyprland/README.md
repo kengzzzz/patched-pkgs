@@ -45,8 +45,10 @@ The patch blocks direct scanout for buffers that aquamarine has already
 marked as unimportable, and the rollback only resets the format when the
 attempt changed it. The commit coordinator also restores the format after a
 failed direct scanout commit, so the patch passes it the previous format only
-when the attempt changed it. A bad buffer now costs one modeset, and Hyprland
-composites the window instead. It changes only `src/output/Monitor.cpp`.
+when the attempt changed it. Each new bad buffer now costs two swapchain
+reallocations and one flip, a modeset without the aquamarine patches, and
+Hyprland composites the window instead. It changes only
+`src/output/Monitor.cpp`.
 
 Drop this patch when upstream checks the buffer before changing the output
 format in `CMonitor::attemptDirectScanout`.
@@ -97,8 +99,9 @@ SDR metadata to the display. Hyprland kept compositing for the PQ image
 description, so the panel showed PQ pixels as SDR and colors were wrong.
 
 The patch keeps the configured HDR metadata whenever the frame is composited.
-A surface with an SDR image description that is scanned out directly still
-gets SDR metadata. Auto HDR also no longer changes the CM type of a monitor
+With the default `render:non_shader_cm = "ignore"`, a surface with an SDR
+image description can still be scanned out directly. The display then gets no
+HDR metadata, since the aquamarine patch clears the property. Auto HDR also no longer changes the CM type of a monitor
 configured for HDR, so `hdr` and `hdredid` stay as set. Monitors configured for SDR behave as before. It
 changes only `src/render/Renderer.cpp`.
 
@@ -150,9 +153,11 @@ letting top layers block the solitary state. While a window is solitary,
 Hyprland scans it out or draws only that window, so these layers were not
 shown.
 
-The patch lets a top layer that is allowed above the fullscreen window and
-not faded out block solitary again, the same way overlay layers do. Top
-layers hidden under the window, such as a bar, still don't. It changes only
+The patch lets a mapped top layer that is allowed above the fullscreen window
+and not faded out block solitary again, like overlay layers. Unlike an
+overlay layer, it stops blocking as soon as it unmaps, so Hyprland's fade-out
+isn't shown over the window. Top layers hidden under the window, such as a
+bar, still don't block. It changes only
 `src/output/Monitor.cpp`.
 
 Drop this patch when upstream checks top layers above a fullscreen window in
@@ -204,7 +209,8 @@ stays fullscreen on the monitor, so an OSD changes neither the format nor the
 swapchain. Only 8 bit, 10 bit and half float RGB formats are kept, half float
 only when the GPU can render into it. In HDR, the window's own HDR metadata is
 kept along with its format, and Hyprland only sends metadata again when it
-changes, since every metadata change is a modeset. Hyprland goes back to its
+changes, since some displays blank on every metadata change. Hyprland goes
+back to its
 own format and metadata when the window leaves fullscreen or closes, when
 another window becomes fullscreen, when a composited commit fails and when a
 monitor rule is applied.
@@ -238,10 +244,15 @@ there, not data from the video, so the switch gained nothing.
 The patch keeps the monitor's metadata for surfaces with the PQ transfer
 function, in direct scanout too, while the monitor is configured for HDR. A
 client that sends real mastering data loses that hint, and the display
-handles highlights above its own peak without it. Surfaces with an SDR image
-description still get SDR metadata in direct scanout, and auto HDR still
-passes the surface's metadata through. The metadata part of 0012 then only
-matters for auto HDR. It changes only `src/render/Renderer.cpp`.
+handles highlights above its own peak without it. A surface with an SDR image
+description still turns HDR metadata off in direct scanout, which only
+happens with `non_shader_cm = "ignore"`. Auto HDR still passes the surface's
+metadata through. The metadata part of 0012 then only matters for auto HDR.
+
+Turning HDR off while a PQ window was scanned out sent the window's own
+metadata first. A client that stays in HDR then kept the display in HDR until
+scanout ended. The patch turns HDR metadata off at once. It changes only
+`src/render/Renderer.cpp`.
 
 Drop this patch when upstream can keep the monitor's HDR metadata for
 fullscreen windows.
@@ -263,12 +274,22 @@ windows came out right, but two kinds of content did not:
 The patch converts textures that are already in the FP16 work buffer back to
 SDR for the copy and undoes the SDR brightness boost. An HDR surface puts its
 reference white at SDR white in the copy, before tone mapping, and brighter
-highlights clip. The copy is also kept on HDR monitors without SDR brightness
-or saturation changes when the work buffer is FP16. Before, those
-screenshots were converted from the whole HDR frame, which shifted colors and
-clipped HDR surfaces the same way. The patch also fixes the inner glow
-shader, which returned the wrong type for the copy and failed to compile, so
-the glow was missing in HDR with SDR brightness or saturation changes.
+highlights clip. On HDR monitors without SDR luminance, brightness or
+saturation changes, the copy is now also drawn when the work buffer is FP16,
+but only while a screenshot or screen share of the monitor runs, or while
+another monitor mirrors it.
+Before, those were converted from the whole HDR frame, which shifted colors
+and clipped HDR surfaces the same way.
+
+The patch also fixes two shader errors that upstream has in the copy's code:
+
+- The inner glow shader returned the wrong type for the copy and failed to
+  compile, so the glow was missing whenever the copy was drawn. That was in
+  HDR with SDR changes, and on any monitor with
+  `render:keep_unmodified_copy = 1`.
+- The blur code declared one variable twice. With
+  `render:use_shader_blur_blend` and `decoration:blur:proportional` on, a
+  blurred window wasn't drawn at all while the copy was drawn.
 
 Known limits:
 
@@ -276,9 +297,13 @@ Known limits:
   background or in a close animation snapshot comes out too bright. For the
   blur, this needs a blurred window over an HDR window, which
   `decoration:blur:xray` avoids for floating windows over tiled ones.
-- Without an FP16 work buffer (`render:use_fp16 = 0`), the copy keeps the
-  monitor's BT.2020 primaries as before, and only the HDR surface change
-  applies.
+- SDR saturation isn't undone for blurred backgrounds and snapshots, so they
+  stay oversaturated with `sdrsaturation` above 1. Borders in snapshots come
+  out a bit darker with `sdrbrightness` above 1.
+- Without an FP16 work buffer (`render:use_fp16 = 0`), the copy is only drawn
+  with SDR changes. It then keeps the monitor's BT.2020 primaries as before,
+  blurred backgrounds and snapshots go into it as PQ, and only the HDR
+  surface change applies.
 
 It changes `src/render/shaders/glsl/cm_helpers.glsl`,
 `src/render/shaders/glsl/surface.frag`,
@@ -361,7 +386,15 @@ and stock failed the VM checks for 0001 and 0012. A Vulkan client scanned out
 with `quirks:skip_non_kms_dmabuf_formats` off, the new default.
 
 Tested on 0.57.2 with the same setup: both smoke scripts passed every check,
-and stock failed the VM checks for 0001 and 0012.
+and stock failed the VM checks for 0001 and 0012. After the fixes to 0009,
+0013 and 0014 they passed again, and:
+
+- 0013 in HDR with `cm_auto_hdr = 0`: turning HDR off under a fullscreen
+  browser video in direct scanout changed the HDR metadata once, straight to
+  none. Before the fix, the video's own metadata was sent first.
+- 0014 in HDR without SDR changes: screenshots of a wallpaper matched SDR
+  screenshots, the first one too. With `render:use_fp16 = 0`, which turns
+  the copy off, they differed in 12% of the pixels.
 
 ## References and diagnostics
 

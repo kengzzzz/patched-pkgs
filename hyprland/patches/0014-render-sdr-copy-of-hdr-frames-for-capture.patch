@@ -1,14 +1,14 @@
 diff --git a/src/output/Monitor.cpp b/src/output/Monitor.cpp
-index c1f5a35..74d0e6e 100644
+index 5bde8b1..af70bba 100644
 --- a/src/output/Monitor.cpp
 +++ b/src/output/Monitor.cpp
-@@ -2739,7 +2739,8 @@ bool CMonitor::needsUnmodifiedCopy() {
+@@ -2741,7 +2741,8 @@ bool CMonitor::needsUnmodifiedCopy() {
      const bool HAS_MODS = m_sdrMinLuminance != SDR_MIN_LUMINANCE || m_sdrMaxLuminance != SDR_MAX_LUMINANCE || (m_sdrBrightness > 0 && m_sdrBrightness != 1.0) ||
          (m_sdrSaturation > 0 && m_sdrSaturation != 1.0);
  
 -    if (!HAS_MODS)
-+    // the copy is only right with an sRGB primaries (FP16) work buffer, but there it also beats converting the whole HDR frame back without mods
-+    if (!HAS_MODS && !useFP16())
++    // without mods the copy is only for capture and mirrors, and only with an sRGB primaries (FP16) work buffer, where it beats converting the whole HDR frame back
++    if (!HAS_MODS && (!useFP16() || (m_mirrors.empty() && !Screenshare::mgr()->isOutputBeingSSd(m_self.lock()))))
          return false;
  
      // TODO handle some FP16 cases
@@ -78,7 +78,7 @@ index 1d8feb9..c428732 100644
      SHADER_TEX,
      SHADER_ALPHA,
 diff --git a/src/render/shaders/glsl/cm_helpers.glsl b/src/render/shaders/glsl/cm_helpers.glsl
-index 5f8f544..1ae7037 100644
+index 41c24f0..6c8dcd6 100644
 --- a/src/render/shaders/glsl/cm_helpers.glsl
 +++ b/src/render/shaders/glsl/cm_helpers.glsl
 @@ -200,6 +200,26 @@ vec4 fromLinearNit(vec4 color, int tf, vec2 range) {
@@ -151,7 +151,7 @@ index bc74721..f13bad7 100644
  
      if (gradientLength > 0 || gradient2Length > 0)
 diff --git a/src/render/shaders/glsl/surface.frag b/src/render/shaders/glsl/surface.frag
-index ceeab12..1ceabe3 100644
+index ceeab12..86147d8 100644
 --- a/src/render/shaders/glsl/surface.frag
 +++ b/src/render/shaders/glsl/surface.frag
 @@ -63,6 +63,11 @@ const mat3 targetPrimariesXYZ = mat3(0.0);
@@ -175,21 +175,31 @@ index ceeab12..1ceabe3 100644
  #endif
  #endif
  
-@@ -200,7 +205,7 @@ void main() {
+@@ -200,10 +205,10 @@ void main() {
      if (discardAlpha && mirrorColor.a <= discardAlphaValue)
          mirrorBlurAlphaMask = 0.0;
  #endif
 -    vec4  blurredMirrorColor = texture(blurredBG, blurUV);
 +    vec4  blurredMirrorColor = workToMirror(texture(blurredBG, blurUV));
  #if USE_BLUR_PROPORTIONAL
-     float t                  = 1.0 - pixColor.a;
-     float blurredMirrorAlpha = 1.0 - t * t * t;
-@@ -218,7 +223,7 @@ void main() {
+-    float t                  = 1.0 - pixColor.a;
+-    float blurredMirrorAlpha = 1.0 - t * t * t;
++    float mt                 = 1.0 - pixColor.a;
++    float blurredMirrorAlpha = 1.0 - mt * mt * mt;
+ #else
+     float blurredMirrorAlpha = 1.0;
+ #endif
+@@ -218,10 +223,10 @@ void main() {
  #else
          float mirrorBlurAlphaMask = 1.0;
  #endif
 -        vec4  blurredMirrorColor = texture(blurredBG, blurUV);
 +        vec4  blurredMirrorColor = workToMirror(texture(blurredBG, blurUV));
  #if USE_BLUR_PROPORTIONAL
-         float t                  = 1.0 - pixColor.a;
-         float blurredMirrorAlpha = 1.0 - t * t * t;
+-        float t                  = 1.0 - pixColor.a;
+-        float blurredMirrorAlpha = 1.0 - t * t * t;
++        float mt                 = 1.0 - pixColor.a;
++        float blurredMirrorAlpha = 1.0 - mt * mt * mt;
+ #else
+         float blurredMirrorAlpha = 1.0;
+ #endif

@@ -1,8 +1,8 @@
 diff --git a/src/render/Renderer.cpp b/src/render/Renderer.cpp
-index 4da6927a..7916e9ed 100644
+index ac177da..b9a3797 100644
 --- a/src/render/Renderer.cpp
 +++ b/src/render/Renderer.cpp
-@@ -2621,7 +2621,12 @@ void IHyprRenderer::handleFullscreenSettings(PHLMONITOR pMonitor) {
+@@ -2627,7 +2627,12 @@ void IHyprRenderer::handleFullscreenSettings(PHLMONITOR pMonitor) {
                          hdrMetadataEqual(SURF->m_colorManagement->hdrMetadata(), pMonitor->m_output->state->state().hdrMetadata);
                  if (FULLSCREEN_WINDOW && FULLSCREEN_WINDOW->m_ruleApplicator->noAutoHDR().valueOrDefault())
                      wantHDR = configuredHDR;
@@ -12,7 +12,7 @@ index 4da6927a..7916e9ed 100644
 +                if (KEEP_MONITOR_METADATA) {
 +                    wantHDR                            = true;
 +                    pMonitor->m_hdrMetadataFromSurface = false;
-+                } else if (surfaceIsHDR && !SURF->m_colorManagement->isWindowsScRGB() && !pMonitor->m_lastScanout.expired()) {
++                } else if (wantHDR && surfaceIsHDR && !SURF->m_colorManagement->isWindowsScRGB() && !pMonitor->m_lastScanout.expired()) {
                      // DS HDR
                      bool needsHdrMetadataUpdate =
                          SURF->m_colorManagement->needsHdrMetadataUpdate() || pMonitor->m_previousFSWindow != FULLSCREEN_WINDOW || pMonitor->m_needsHDRupdate;
