@@ -1,0 +1,78 @@
+diff --git a/channels/rdpewa/client/rdpewa_fido.c b/channels/rdpewa/client/rdpewa_fido.c
+index 37a5666..254ad1c 100644
+--- a/channels/rdpewa/client/rdpewa_fido.c
++++ b/channels/rdpewa/client/rdpewa_fido.c
+@@ -85,6 +85,22 @@ static bool rdpewa_fido_uv_failed(int result)
+ 	return (result == FIDO_ERR_UV_BLOCKED) || (result == FIDO_ERR_UV_INVALID);
+ }
+ 
++static bool rdpewa_fido_uv_not_required(UINT32 flags)
++{
++	const UINT32 uvFlags = CTAPCLT_UV_REQUIRED_FLAG | CTAPCLT_UV_PREFERRED_FLAG |
++	                       CTAPCLT_CLIENT_PIN_REQUIRED_FLAG |
++	                       CTAPCLT_SELECT_CREDENTIAL_ALLOW_UV_FLAG;
++	return ((flags & CTAPCLT_UV_NOT_REQUIRED_FLAG) != 0) && ((flags & uvFlags) == 0);
++}
++
++/* Without a PIN, alwaysUv keys refuse and credProtect hides credentials */
++static bool rdpewa_fido_pin_needed(const fido_dev_t* dev, int result)
++{
++	if (result == FIDO_ERR_PIN_REQUIRED)
++		return true;
++	return (result == FIDO_ERR_NO_CREDENTIALS) && fido_dev_supports_cred_prot(dev);
++}
++
+ static DWORD WINAPI rdpewa_fido_makecred_thread(LPVOID arg)
+ {
+ 	RDPEWA_FIDO_ASYNC* a = (RDPEWA_FIDO_ASYNC*)arg;
+@@ -763,12 +779,13 @@ out:
+  */
+ WINPR_ATTR_MALLOC(Stream_Free, 1)
+ static wStream* rdpewa_fido_get_assertion(rdpContext* context, const BYTE* ctapData, size_t ctapLen,
+-                                          WINPR_ATTR_UNUSED UINT32 flags)
++                                          UINT32 flags)
+ {
+ 	fido_dev_t* dev = nullptr;
+ 	RDPEWA_DEVICE_INFO devInfo = WINPR_C_ARRAY_INIT;
+ 	fido_assert_t* assert = nullptr;
+ 	wStream* ret = nullptr;
++	bool up = true;
+ 	bool uv = false;
+ 
+ 	WINPR_ASSERT(ctapData);
+@@ -867,9 +884,10 @@ static wStream* rdpewa_fido_get_assertion(rdpContext* context, const BYTE* ctapD
+ 							continue;
+ 
+ 						if (okl == 2 && memcmp(ok, "up", 2) == 0)
+-							fido_assert_set_up(assert, cbor_get_bool(oPairs[j].value)
+-							                               ? FIDO_OPT_TRUE
+-							                               : FIDO_OPT_FALSE);
++						{
++							up = cbor_get_bool(oPairs[j].value);
++							fido_assert_set_up(assert, up ? FIDO_OPT_TRUE : FIDO_OPT_FALSE);
++						}
+ 						else if (okl == 2 && memcmp(ok, "uv", 2) == 0)
+ 						{
+ 							uv = cbor_get_bool(oPairs[j].value);
+@@ -944,7 +962,9 @@ static wStream* rdpewa_fido_get_assertion(rdpContext* context, const BYTE* ctapD
+ 	{
+ 		char* pin = nullptr;
+ 		const bool useUv = uv && fido_dev_has_uv(dev);
+-		if (fido_dev_has_pin(dev) && !useUv && !rdpewa_fido_get_pin(context, &pin))
++		const bool uvNotRequired = up && !uv && rdpewa_fido_uv_not_required(flags);
++		if (fido_dev_has_pin(dev) && !useUv && !uvNotRequired &&
++		    !rdpewa_fido_get_pin(context, &pin))
+ 		{
+ 			ret = rdpewa_cbor_encode_webauthn_response(E_FAIL, 0x01, nullptr, 0, &devInfo);
+ 			goto out;
+@@ -962,7 +982,9 @@ static wStream* rdpewa_fido_get_assertion(rdpContext* context, const BYTE* ctapD
+ 		r = fta.result;
+ 		winpr_zfree(pin);
+ 
+-		if (useUv && rdpewa_fido_uv_failed(r) && fido_dev_has_pin(dev))
++		if (((useUv && rdpewa_fido_uv_failed(r)) ||
++		     (uvNotRequired && rdpewa_fido_pin_needed(dev, r))) &&
++		    fido_dev_has_pin(dev))
+ 		{
+ 			if (!rdpewa_fido_get_pin(context, &pin))
+ 			{
