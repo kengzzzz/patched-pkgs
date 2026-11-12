@@ -6,7 +6,7 @@ here installs a package or changes the running system.
 
 | Package | Patches |
 | --- | --- |
-| [hyprland](hyprland/README.md) | Tearing and direct scanout feedback for Wine subsurfaces, scanout feedback for windows that map fullscreen, guard against a scanout modeset loop, HDR signaling for SDR fullscreen windows, flow control for torn direct scanout, presentation feedback tagging, top layers over fullscreen windows, tearing hints from subsurfaces, scanout format kept while a fullscreen window is composited, configured HDR metadata kept for HDR fullscreen windows, SDR colors in screenshots of HDR frames |
+| [hyprland](hyprland/README.md) | Tearing and direct scanout feedback for Wine subsurfaces, scanout feedback for windows that map fullscreen, guard against a scanout modeset loop, HDR signaling for SDR fullscreen windows, flow control for torn direct scanout, presentation feedback tagging, top layers over fullscreen windows, tearing hints from subsurfaces, scanout format kept while a fullscreen window is composited, configured HDR metadata kept for HDR fullscreen windows, SDR colors in screenshots of HDR frames, no nested processing of a surface's commit queue |
 | [quickshell](quickshell/README.md) | Shared VkDevice for all windows, event socket reconnect |
 | [egl-wayland2](egl-wayland2/README.md) | `wl_buffer.release` leak with explicit sync |
 | [aquamarine](aquamarine/README.md) | Direct scanout with tearing, format and HDR metadata changes without a modeset, buffer age of new swapchain buffers, outputs left on at exit, no HDR infoframe in SDR |

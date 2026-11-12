@@ -1,6 +1,6 @@
 # hyprland
 
-Hyprland 0.57.2 with thirteen patches. The numbers carry over from earlier
+Hyprland 0.57.2 with fourteen patches. The numbers carry over from earlier
 releases. 0002, a backport of the tearing fix in upstream PR
 [#16572](https://github.com/hyprwm/Hyprland/pull/16572), was dropped because
 0.57.0 includes it. 0015, a fade-in fix for layers that map under a fullscreen
@@ -314,6 +314,30 @@ It changes `src/render/shaders/glsl/cm_helpers.glsl`,
 Drop this patch when upstream converts blurred backgrounds and HDR surfaces
 for the SDR copy.
 
+## 0016: process a surface's commit queue in one pass at a time
+
+`CSurfaceStateQueue::tryProcess` applies a surface's queued commits in order.
+Applying one runs the surface's commit listeners, and some of them can process
+the same queue again before the first pass removes that commit. The nested
+pass applies the commit a second time and removes it. With one commit queued,
+the first pass then removes from an empty queue and Hyprland aborts. With more
+queued, another commit can be dropped without being applied.
+
+A fullscreen game in direct scanout that was allowed to tear hit this. It sent
+a commit with damage but no new buffer, so Hyprland redrew the monitor from
+the commit listener. A visible cursor blocked tearing and the buffer on screen
+was still the game's, so direct scanout took its same-buffer path. That path
+unlocks FIFO on the game's queue and processes it.
+
+The patch makes a nested call return at once. The pass that is already
+running checks the queue again after each commit, so it still applies
+whatever the nested call unlocked, in order. Each call does one more flag
+check, and the loop itself is unchanged. It changes only
+`src/protocols/types/SurfaceStateQueue.cpp` and
+`src/protocols/types/SurfaceStateQueue.hpp`.
+
+Drop this patch when upstream guards `tryProcess` against nested calls.
+
 ## Validation
 
 Tested on 0.56.2 with an RTX 5080 and a 3440x1440 240 Hz QD-OLED, in SDR with
@@ -395,6 +419,12 @@ and stock failed the VM checks for 0001 and 0012. After the fixes to 0009,
 - 0014 in HDR without SDR changes: screenshots of a wallpaper matched SDR
   screenshots, the first one too. With `render:use_fp16 = 0`, which turns
   the copy off, they differed in 12% of the pixels.
+- 0016 in the VM with a pointer device, `allow_tearing` on and a visible
+  cursor: a fullscreen client with the tearing hint and a FIFO object, in
+  direct scanout, committed damage and a frame callback with no buffer.
+  Stock and the build without 0016 aborted in `tryProcess` in all 4 runs.
+  With 0016 Hyprland kept running, the frame callback fired and the client
+  kept drawing. The VM smoke script passed every check with 0016.
 
 ## References and diagnostics
 

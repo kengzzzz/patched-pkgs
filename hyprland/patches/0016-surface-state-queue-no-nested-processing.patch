@@ -1,0 +1,37 @@
+diff --git a/src/protocols/types/SurfaceStateQueue.cpp b/src/protocols/types/SurfaceStateQueue.cpp
+index efb3e98e..a475c650 100644
+--- a/src/protocols/types/SurfaceStateQueue.cpp
++++ b/src/protocols/types/SurfaceStateQueue.cpp
+@@ -91,6 +91,13 @@ auto CSurfaceStateQueue::find(const WP<SSurfaceState>& state) -> std::deque<UP<S
+ }
+ 
+ void CSurfaceStateQueue::tryProcess() {
++    // commitState() runs commit listeners that can unlock this queue again, e.g. direct scanout of the same
++    // buffer unlocks fifo. A nested pass would commit the front state twice, so leave it to this loop.
++    if (m_processing)
++        return;
++
++    m_processing = true;
++
+     while (!m_queue.empty()) {
+         auto& front = m_queue.front();
+ 
+@@ -108,4 +115,6 @@ void CSurfaceStateQueue::tryProcess() {
+         m_surface->commitState(*front);
+         m_queue.pop_front();
+     }
++
++    m_processing = false;
+ }
+diff --git a/src/protocols/types/SurfaceStateQueue.hpp b/src/protocols/types/SurfaceStateQueue.hpp
+index 9f78b1e7..e5cbccfb 100644
+--- a/src/protocols/types/SurfaceStateQueue.hpp
++++ b/src/protocols/types/SurfaceStateQueue.hpp
+@@ -23,6 +23,7 @@ class CSurfaceStateQueue {
+   private:
+     std::deque<UP<SSurfaceState>>                    m_queue;
+     WP<CWLSurfaceResource>                           m_surface;
++    bool                                             m_processing = false;
+ 
+     typename std::deque<UP<SSurfaceState>>::iterator find(const WP<SSurfaceState>& state);
+ };
