@@ -25,6 +25,12 @@ CHECKS = [
     ("fs_ds", "direct scanout after each fullscreen toggle", False),
     ("fs_feedback", "feedback follows fullscreen toggles", False),
     ("no_fallbacks", "no failed format change without a modeset", False),
+    ("lock_replace", "a second lock can't replace a confirmed one (0017)", True),
+    ("lock_limbo", "a second lock can't unlock while the first starts (0017)", True),
+    ("lock_unlock", "the lock holder unlocks", False),
+    ("lock_crash", "a new lock takes over after the holder is killed", False),
+    ("lock_clear", "clear_crashed_lockscreen works after the holder is killed", False),
+    ("lock_finished_once", "a denied lock gets finished only once (0017)", True),
     ("alive", "Hyprland still runs at the end", False),
 ]
 
@@ -129,6 +135,23 @@ def analyze(run):
     r["fs_ds"] = len(ons) == 2 and all(any(map(scanning, window(st, t + 0.8 * S, t + 1.5 * S))) for t in ons)
     r["fs_feedback"] = (len(ons) == 2 and all(any(f["scanout"] for f in fb_osd if t <= f["t"] < t + S) for t in ons)
                         and all(any(not f["scanout"] for f in fb_osd if t <= f["t"] < t + S) for t in offs))
+
+    lk = {}
+    if (run / "lock.txt").exists():
+        for line in open(run / "lock.txt"):
+            k, _, v = line.strip().partition(" ")
+            lk[k] = v
+    ev = {k: set(lk.get(k, "").split(",")) for k in ("holder1", "second1", "holder2", "second2", "holder4", "holder6")}
+    r["lock_replace"] = lk.get("replace_locked") == "true" and "FINISHED" in ev["second1"] and "LOCKED" not in ev["second1"]
+    r["lock_limbo"] = lk.get("limbo_locked") == "true" and "FINISHED" in ev["second2"]
+    r["lock_unlock"] = (lk.get("replace_unlocked") == "false" and lk.get("limbo_unlocked") == "false"
+                        and "LOCKED" in ev["holder1"] and "LOCKED" in ev["holder2"])
+    r["lock_crash"] = (lk.get("clear_live") == "true" and lk.get("crash_locked") == "true"
+                       and lk.get("takeover_locked") == "true" and "LOCKED" in ev["holder4"]
+                       and lk.get("takeover_unlocked") == "false" and lk.get("early_crash_locked") == "true"
+                       and "LOCKED" in ev["holder6"] and lk.get("early_takeover_unlocked") == "false")
+    r["lock_clear"] = lk.get("clear_dead") == "false"
+    r["lock_finished_once"] = lk.get("denied_clear") == "false" and lk.get("second3", "").split(",").count("FINISHED") == 1
 
     log = (run / "hyprland.log").read_text(errors="replace")
     a, b = log.find("SMOKEMARK root"), log.find("SMOKEMARK end")

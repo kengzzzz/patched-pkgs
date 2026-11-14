@@ -1,6 +1,6 @@
 # hyprland
 
-Hyprland 0.57.2 with fourteen patches. The numbers carry over from earlier
+Hyprland 0.57.2 with fifteen patches. The numbers carry over from earlier
 releases. 0002, a backport of the tearing fix in upstream PR
 [#16572](https://github.com/hyprwm/Hyprland/pull/16572), was dropped because
 0.57.0 includes it. 0015, a fade-in fix for layers that map under a fullscreen
@@ -338,6 +338,31 @@ check, and the loop itself is unchanged. It changes only
 
 Drop this patch when upstream guards `tryProcess` against nested calls.
 
+## 0017: no new session lock while the lock program runs
+
+With `misc:allow_session_lock_restore` on, a lock program that crashes can be
+started again and take over the locked session. Hyprland also let a new lock
+replace a confirmed lock whose program was still running, and the new lock
+could then unlock the session. Any program that can connect to Wayland outside
+a sandbox could unlock it without authenticating. A new lock sent while the
+first one was still starting got no answer, and it could also unlock the
+session later.
+
+The patch refuses a new lock while the current lock exists. The current lock
+ends when its program unlocks it, destroys it, exits or crashes, so a lock
+program restarted after a crash still takes over. A lock program that hangs
+must now be killed before a new one can take over. A refused lock gets
+`finished` only once, even when `hl.clear_crashed_lockscreen()` runs later. It
+changes `src/managers/SessionLockManager.cpp` and
+`src/protocols/SessionLock.cpp`.
+
+The patch only matters with `misc:allow_session_lock_restore` on. After the
+lock program dies, any program can still take the lock, and a program running
+as the user can kill the lock program first.
+
+Drop this patch when upstream refuses a new session lock while the current
+lock's program still runs.
+
 ## Validation
 
 Tested on 0.56.2 with an RTX 5080 and a 3440x1440 240 Hz QD-OLED, in SDR with
@@ -425,6 +450,14 @@ and stock failed the VM checks for 0001 and 0012. After the fixes to 0009,
   Stock and the build without 0016 aborted in `tryProcess` in all 4 runs.
   With 0016 Hyprland kept running, the frame callback fired and the client
   kept drawing. The VM smoke script passed every check with 0016.
+- 0017 in the VM with `misc:allow_session_lock_restore` on: a second lock
+  client got `locked` from stock after the first lock was confirmed, and no
+  answer while the first lock was still starting. Both times its unlock
+  unlocked the session. With 0017 it got `finished` and the session stayed
+  locked. A refused client that kept its lock got `finished` only once when
+  the crashed lock was cleared later. A lock client killed before or after
+  its lock was confirmed left the session locked, a new one took over, and
+  `hl.clear_crashed_lockscreen()` worked as before.
 
 ## References and diagnostics
 
@@ -455,8 +488,10 @@ and stock failed the VM checks for 0001 and 0012. After the fixes to 0009,
   every displayed frame and the CPU instructions per frame. The guest has
   no async page flips or HDR metadata, so tearing and HDR need the live
   test. The results are in `diagnostics/latency/RESULTS.md`.
-- `diagnostics/smoke/vm.sh` runs scanout, feedback, OSD and output checks on
-  stock and patched builds in that VM. Run it before installing.
+- `diagnostics/smoke/vm.sh` runs scanout, feedback, OSD, output and session
+  lock checks on stock and patched builds in that VM. Run it before
+  installing. Its lock client takes the session lock, so never run it on the
+  live session.
 - `diagnostics/smoke/live.sh` checks tearing, OSDs and GPU buffers on the
   running session in about a minute. Run it after installing. HDR (0006,
   0013, 0014) still needs a manual check.

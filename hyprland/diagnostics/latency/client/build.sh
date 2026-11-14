@@ -14,3 +14,9 @@ done
 # shellcheck disable=SC2046
 gcc -O2 -Wall -I"$build" -o "$build/abclient" "$here/abclient.c" "$build"/*-protocol.c \
     $(pkg-config --cflags --libs wayland-client libdrm gbm)
+lock=$wp/staging/ext-session-lock/ext-session-lock-v1.xml
+wayland-scanner client-header "$lock" "$build/ext-session-lock-v1-client-protocol.h"
+wayland-scanner private-code "$lock" "$build/ext-session-lock-v1-lock.c"
+# shellcheck disable=SC2046
+gcc -O2 -Wall -I"$build" -o "$build/lockclient" "$here/lockclient.c" "$build/ext-session-lock-v1-lock.c" \
+    $(pkg-config --cflags --libs wayland-client)

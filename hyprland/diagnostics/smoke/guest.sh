@@ -64,6 +64,98 @@ done
 wait "$game"
 mark end
 
+lockc=$share/client/build/lockclient
+locks=$out/lock
+mkdir -p "$locks"
+result() { echo "$1 $2" >> "$out/lock.txt"; }
+locked() { hyprctl locked 2>&1 | tr -d '[:space:]'; }
+events() { awk '{print $1}' "$locks/$1.txt" 2>/dev/null | paste -sd, -; }
+# start_holder <name> [args]: start a lock client in the background and wait for its first event
+start_holder() {
+    local name=$1 want=LOCKED
+    shift
+    [[ " $* " == *" --no-draw "* ]] && want=REQUEST
+    "$lockc" --log "$locks/$name.txt" --seconds 60 "$@" &
+    holder=$!
+    for _ in $(seq 80); do grep -q "^$want " "$locks/$name.txt" 2>/dev/null && return 0; sleep 0.1; done
+    return 1
+}
+unlock_holder() {
+    kill -USR1 "$holder"
+    wait "$holder"
+    sleep 0.3
+}
+crash_holder() {
+    kill -9 "$holder"
+    wait "$holder" 2>/dev/null
+    sleep 0.5
+}
+
+mark lock-replace
+start_holder holder1
+"$lockc" --log "$locks/second1.txt" --unlock-after 1000 --seconds 5
+sleep 0.5
+result replace_locked "$(locked)"
+unlock_holder
+result replace_unlocked "$(locked)"
+result holder1 "$(events holder1)"
+result second1 "$(events second1)"
+
+mark lock-limbo
+start_holder holder2 --no-draw
+sleep 0.5
+"$lockc" --log "$locks/second2.txt" --unlock-after 1000 --seconds 5
+sleep 0.5
+result limbo_locked "$(locked)"
+for _ in $(seq 80); do grep -q '^LOCKED ' "$locks/holder2.txt" && break; sleep 0.1; done
+unlock_holder
+result limbo_unlocked "$(locked)"
+result holder2 "$(events holder2)"
+result second2 "$(events second2)"
+
+mark lock-crash
+start_holder holder3
+hyprctl eval 'hl.clear_crashed_lockscreen()' > "$locks/clear-live.txt" 2>&1
+result clear_live "$(locked)"
+crash_holder
+result crash_locked "$(locked)"
+start_holder holder4
+result takeover_locked "$(locked)"
+unlock_holder
+result takeover_unlocked "$(locked)"
+result holder4 "$(events holder4)"
+
+mark lock-crash-early
+start_holder holder5 --no-draw
+sleep 0.5
+crash_holder
+result early_crash_locked "$(locked)"
+start_holder holder6
+unlock_holder
+result early_takeover_unlocked "$(locked)"
+result holder6 "$(events holder6)"
+
+mark lock-clear
+start_holder holder7
+crash_holder
+hyprctl eval 'hl.clear_crashed_lockscreen()' > "$locks/clear-dead.txt" 2>&1
+sleep 0.3
+result clear_dead "$(locked)"
+
+mark lock-finished-once
+start_holder holder8
+"$lockc" --log "$locks/second3.txt" --seconds 4 &
+second=$!
+sleep 1
+crash_holder
+hyprctl eval 'hl.clear_crashed_lockscreen()' > "$locks/clear-denied.txt" 2>&1
+sleep 0.3
+result denied_clear "$(locked)"
+wait "$second"
+hyprctl eval 'hl.clear_crashed_lockscreen()' > /dev/null 2>&1
+result second3 "$(events second3)"
+mark lock-end
+
 kill -0 "$pid" 2>/dev/null && touch "$out/alive"
 kill "$sampler" "$crc" 2>/dev/null
 kill "$pid"

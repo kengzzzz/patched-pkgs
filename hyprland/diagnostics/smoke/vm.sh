@@ -13,7 +13,7 @@ BUILD_JOBS=${BUILD_JOBS:-8} "$vm/setup.sh"
 rm -rf "$work/share/guest" "$work/share/client" "$work/share/smoke" "$work/share/smoke-results"
 cp -r "$vm/guest" "$work/share/guest"
 mkdir -p "$work/share/client" "$work/share/smoke"
-cp "$client/abclient.c" "$client/build.sh" "$client/wlr-layer-shell-unstable-v1.xml" "$work/share/client/"
+cp "$client/abclient.c" "$client/lockclient.c" "$client/build.sh" "$client/wlr-layer-shell-unstable-v1.xml" "$work/share/client/"
 cp "$here/guest.sh" "$here/../latency/live/sample.py" "$work/share/smoke/"
 
 "$vm/boot.sh" > "$work/qemu.log" 2>&1 &

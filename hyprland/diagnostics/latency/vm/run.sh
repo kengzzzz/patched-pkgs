@@ -15,7 +15,7 @@ name=results-$(date +%Y%m%d-%H%M%S)
 rm -rf "$work/share/guest" "$work/share/client"
 cp -r "$here/guest" "$work/share/guest"
 mkdir -p "$work/share/client"
-cp "$here/../client/abclient.c" "$here/../client/build.sh" "$here/../client/wlr-layer-shell-unstable-v1.xml" "$work/share/client/"
+cp "$here/../client/abclient.c" "$here/../client/lockclient.c" "$here/../client/build.sh" "$here/../client/wlr-layer-shell-unstable-v1.xml" "$work/share/client/"
 
 "$here/boot.sh" > "$work/qemu.log" 2>&1 &
 qemu=$!

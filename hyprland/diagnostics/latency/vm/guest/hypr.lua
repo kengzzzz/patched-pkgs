@@ -15,6 +15,7 @@ hl.config({
         disable_splash_rendering        = true,
         disable_hyprland_guiutils_check = true,
         disable_autoreload              = true,
+        allow_session_lock_restore      = true,
         background_color                = 0x203040,
     },
     animations = {
