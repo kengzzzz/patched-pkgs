@@ -88,8 +88,9 @@ The workflow does not check the packages against any system. Check the
 fits the CachyOS znver4 and Arch repositories: an `ABI_PACKAGES` entry or the
 package itself has a new upstream version, the repositories have a higher
 version that would replace the patched package, or a dependency is missing.
-Update `package.env`, bump `PKGREL` and push to build again. GitHub turns the
-schedule off after 60 days without a commit.
+Update `package.env`, bump `PKGREL` and push to build again. When CachyOS
+only lags behind Arch, wait for it instead, since the build uses Arch's
+packages. GitHub turns the schedule off after 60 days without a commit.
 
 ## Install
 
