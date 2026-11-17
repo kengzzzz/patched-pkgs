@@ -2,14 +2,23 @@
 set -euo pipefail
 
 usage() {
-    printf 'Usage: %s [--refresh] <package>\n' "${0##*/}" >&2
-    printf '  --refresh  rebuild every layer, so pacman -Syu runs again\n' >&2
+    printf 'Usage: %s [--refresh] [--no-host-check] <package>\n' "${0##*/}" >&2
+    printf '  --refresh        rebuild every layer, so pacman -Syu runs again\n' >&2
+    printf '  --no-host-check  skip the dependency and ABI check against this host\n' >&2
     exit 1
 }
 
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 refresh=()
-[[ ${1:-} == --refresh ]] && { refresh=(--no-cache); shift; }
+host_check=1
+while [[ ${1:-} == --* ]]; do
+    case $1 in
+        --refresh) refresh=(--no-cache) ;;
+        --no-host-check) host_check=0 ;;
+        *) usage ;;
+    esac
+    shift
+done
 [[ $# -eq 1 ]] || usage
 pkg=${1%/}
 dir=$root/$pkg
@@ -41,6 +50,12 @@ docker build --progress=plain "${refresh[@]}" "${args[@]}" \
     --output "type=local,dest=$out" "$dir" 2>&1 | tee "$log"
 mv -- "$log" "$out/build.log"
 (cd "$out" && sha256sum -- *.pkg.tar.zst > SHA256SUMS)
+
+if ((!host_check)); then
+    printf '\nBuilt without a host check:\n'
+    ls -1 "$out"/*.pkg.tar.zst
+    exit 0
+fi
 
 status=0
 for package in "$out"/*.pkg.tar.zst; do

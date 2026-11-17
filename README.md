@@ -69,7 +69,9 @@ build again.
 
 After the build, `build.sh` fails if the host is missing a runtime dependency
 or if an `ABI_PACKAGES` entry has a different upstream version on the host.
-Update the host or rebuild with `--refresh`.
+Update the host or rebuild with `--refresh`. `--no-host-check` skips this
+check, for builds that go to another system, such as sys-setup building on the
+live ISO and checking against the installed target.
 
 ## Install
 
