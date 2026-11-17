@@ -12,9 +12,9 @@ RUN bash -euo pipefail -c '\
     pacman -Syu --needed --noconfirm "${packages[@]}"'
 RUN useradd --create-home builder && \
     install -d -o builder -g builder /build /artifacts
-RUN sed -i 's/-march=x86-64 -mtune=generic -O2/-march=native -O3/' /etc/makepkg.conf && \
-    grep -q -- '-march=native -O3' /etc/makepkg.conf && \
-    gcc -march=native -Q --help=target | grep -E '^ +-m(arch|tune)='
+RUN sed -i 's/-march=x86-64 -mtune=generic -O2/-march=znver5 -mtune=znver5 -O3/' /etc/makepkg.conf && \
+    grep -q -- '-march=znver5 -mtune=znver5 -O3' /etc/makepkg.conf && \
+    gcc -march=znver5 -mtune=znver5 -Q --help=target | grep -E '^ +-m(arch|tune)='
 
 FROM dependencies AS source
 ARG UPSTREAM_URL
@@ -41,7 +41,11 @@ ARG UPSTREAM_COMMIT
 ENV PKGVER=${PKGVER} PKGREL=${PKGREL} BUILD_JOBS=${BUILD_JOBS} \
     MAKEFLAGS=-j${BUILD_JOBS} UPSTREAM_COMMIT=${UPSTREAM_COMMIT}
 COPY --chown=builder:builder PKGBUILD /build/PKGBUILD
-RUN nice -n 19 makepkg --noconfirm --cleanbuild && \
+# Tests run znver5 code, which can crash on another CPU.
+RUN native=$(gcc -march=native -Q --help=target | awk '$1 == "-march=" { print $2 }') && \
+    echo "Build CPU: $native" && \
+    if [ "$native" = znver5 ]; then check=; else check=--nocheck; fi && \
+    nice -n 19 makepkg --noconfirm --cleanbuild $check && \
     cp -- *.pkg.tar.zst /artifacts/ && \
     makepkg --printsrcinfo > /artifacts/.SRCINFO && \
     pacman -Q > /artifacts/build-packages.txt && \
