@@ -1,0 +1,79 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '*/package.env'
+      - '*/Dockerfile'
+      - '*/PKGBUILD'
+      - '*/patches/**'
+      - build.sh
+      - .github/workflows/release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  PACKAGES: aquamarine egl-wayland2 hyprland freerdp
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      packages: ${{ steps.plan.outputs.packages }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: plan
+        run: |
+          todo=()
+          for pkg in $PACKAGES; do
+            tag=$(set -a; source "$pkg/package.env"; printf '%s-%s-%s' "$pkg" "$PKGVER" "$PKGREL")
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+              echo "$tag is released"
+            else
+              echo "$tag will be built"
+              todo+=("$pkg")
+            fi
+          done
+          printf 'packages=%s\n' "$(printf '%s\n' "${todo[@]}" | jq -Rnc '[inputs | select(length > 0)]')" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.packages != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJSON(needs.plan.outputs.packages) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Runner CPU
+        run: lscpu | grep -E '^(Model name|Flags)'
+      - name: Free disk space
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+      - name: Build
+        run: |
+          pkg=${{ matrix.package }}
+          if ! BUILD_JOBS=$(nproc) ./build.sh --refresh --no-host-check "$pkg"; then
+            log=$(ls "$pkg"/dist/*.log | head -1)
+            tail -n 60 "$log" | sed 's/%/%25/g' | awk '{ printf "%s%%0A", $0 }' | sed 's/^/::error title=build failed::/'
+            echo
+            exit 1
+          fi
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pkg=${{ matrix.package }}
+          version=$(set -a; source "$pkg/package.env"; printf '%s-%s' "$PKGVER" "$PKGREL")
+          tag=$pkg-$version
+          tar -cf "$tag.tar" "$pkg/package.env" "$pkg/dist/$version"
+          sha256sum "$tag.tar" > "$tag.tar.sha256"
+          gh release create "$tag" --target "$GITHUB_SHA" --title "$tag" \
+            --notes-file "$pkg/dist/$version/source.txt" "$tag.tar" "$tag.tar.sha256"

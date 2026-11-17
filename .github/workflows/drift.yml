@@ -1,0 +1,42 @@
+name: drift
+
+on:
+  schedule:
+    - cron: '23 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PACKAGES: aquamarine egl-wayland2 hyprland freerdp
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - uses: actions/checkout@v4
+      - name: Target repositories
+        run: |
+          sed -i -e 's/^Architecture = auto$/Architecture = x86_64 x86_64_v4/' \
+              -e '/^\[core\]$/e cat .github/target-repos.conf' /etc/pacman.conf
+          grep -q '^Architecture = x86_64 x86_64_v4$' /etc/pacman.conf
+          pacman -Sy
+      - name: Download releases
+        run: |
+          mkdir releases
+          for pkg in $PACKAGES; do
+            tag=$(set -a; source "$pkg/package.env"; printf '%s-%s-%s' "$pkg" "$PKGVER" "$PKGREL")
+            base=https://github.com/$GITHUB_REPOSITORY/releases/download/$tag
+            if curl -fsSL -o "releases/$tag.tar" "$base/$tag.tar" &&
+               curl -fsSL -o "releases/$tag.tar.sha256" "$base/$tag.tar.sha256"; then
+              (cd releases && sha256sum -c "$tag.tar.sha256" && tar -xf "$tag.tar")
+            fi
+          done
+      - name: Check
+        run: .github/drift.sh releases $PACKAGES

@@ -58,11 +58,10 @@ The output goes to `<package>/dist/<PKGVER>-<PKGREL>/`:
 ## Compiler flags
 
 Each Dockerfile changes the image's `/etc/makepkg.conf` from
-`-march=x86-64 -mtune=generic -O2` to `-march=native -O3`, like CachyOS's
-makepkg.conf. LTO stays on through makepkg's default `lto` option. Docker
-does not hide the CPU, so `native` resolves to the host CPU (`znver5` here).
-The build log shows the resolved `-march` and `-mtune`. The packages only run
-on the CPU family they were built on.
+`-march=x86-64 -mtune=generic -O2` to `-march=znver5 -mtune=znver5 -O3`.
+LTO stays on through makepkg's default `lto` option. The packages only run on
+Zen 5 CPUs. The build log shows the resolved `-march` and `-mtune`. On another
+CPU, makepkg skips `check()`, because the tests would run Zen 5 code.
 
 `build.sh` never overwrites an existing version directory. Bump `PKGREL` to
 build again.
@@ -72,6 +71,25 @@ or if an `ABI_PACKAGES` entry has a different upstream version on the host.
 Update the host or rebuild with `--refresh`. `--no-host-check` skips this
 check, for builds that go to another system, such as sys-setup building on the
 live ISO and checking against the installed target.
+
+## Releases
+
+`.github/workflows/release.yml` builds aquamarine, egl-wayland2, hyprland and
+freerdp on GitHub after a push to main, or when started by hand. A package is
+built when no release `<package>-<PKGVER>-<PKGREL>` exists yet. A release is
+never replaced. Bump `PKGREL` to publish a new build.
+
+Each release has `<package>-<PKGVER>-<PKGREL>.tar` with `package.env` and
+`dist/<PKGVER>-<PKGREL>/`, laid out like this repository, and its `.sha256`.
+The workflow does not check the packages against any system. Check the
+`ABI_PACKAGES` and dependencies on the system that installs them.
+
+`.github/workflows/drift.yml` runs daily. It fails when a release no longer
+fits the CachyOS znver4 and Arch repositories: an `ABI_PACKAGES` entry or the
+package itself has a new upstream version, the repositories have a higher
+version that would replace the patched package, or a dependency is missing.
+Update `package.env`, bump `PKGREL` and push to build again. GitHub turns the
+schedule off after 60 days without a commit.
 
 ## Install
 
