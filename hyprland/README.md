@@ -1,6 +1,6 @@
 # hyprland
 
-Hyprland 0.57.2 with fifteen patches. The numbers carry over from earlier
+Hyprland 0.57.2 with seventeen patches. The numbers carry over from earlier
 releases. 0002, a backport of the tearing fix in upstream PR
 [#16572](https://github.com/hyprwm/Hyprland/pull/16572), was dropped because
 0.57.0 includes it. 0015, a fade-in fix for layers that map under a fullscreen
@@ -363,6 +363,40 @@ as the user can kill the lock program first.
 Drop this patch when upstream refuses a new session lock while the current
 lock's program still runs.
 
+## 0018: blur a layer's fadeout the way the layer was blurred
+
+When a layer unmaps, Hyprland fades out a snapshot of it. The snapshot has no
+layer, so its blur followed the global `decoration:blur:xray`, while the
+mapped layer used live blur unless it had the `xray` layer rule. With global
+xray on, a frosted panel over windows turned into blurred wallpaper on the
+first frame of its fadeout.
+
+The patch makes the snapshot use live blur unless the layer has the `xray`
+rule, as the mapped layer does. Bottom and background layers always use live
+blur, also as before. Live blur costs more GPU time during the fade. It
+changes only `src/desktop/state/LayerFadeout.cpp`.
+
+Drop this patch when upstream keeps a layer's blur choice for its fadeout.
+
+## 0019: a fading layer shows its blur before its content
+
+A blurred layer drew its blur and its pixels with the same fade alpha. While
+it faded, its text showed over the sharp windows behind it, so two sharp
+images overlapped.
+
+The patch splits the fade of a blurred layer into two halves. In the first
+half only its blur fades in. In the second half its pixels fade in over the
+finished blur. Closing runs the same steps backwards, and the fadeout of a
+closed layer does the same. Layers without blur and windows fade as before.
+A layer's close snapshot is now taken without its fade, since the fadeout
+applies it. Before, a layer that closed while it was still fading in was
+faded twice. It changes `src/render/ElementRenderer.cpp`,
+`src/render/Renderer.cpp`, `src/render/pass/TexPassElement.hpp` and the layer
+fadeout in `src/desktop/state/`.
+
+Drop this patch when upstream fades a blurred layer's blur ahead of its
+pixels.
+
 ## Validation
 
 Tested on 0.56.2 with an RTX 5080 and a 3440x1440 240 Hz QD-OLED, in SDR with
@@ -458,6 +492,24 @@ and stock failed the VM checks for 0001 and 0012. After the fixes to 0009,
   the crashed lock was cleared later. A lock client killed before or after
   its lock was confirmed left the session locked, a new one took over, and
   `hl.clear_crashed_lockscreen()` worked as before.
+- 0018 and 0019 in the VM with blur and xray on: a translucent top layer
+  with an opaque striped bar over a checkerboard window, with a slowed
+  `default` curve, a slowed `easeOutBack` curve and `easeOutBack` at speed 5.
+  With stock, the sharp window and the bar showed in the same frame at up to
+  66%. The closing layer also dropped its blur on the first frame. With 0018
+  and an earlier 0019 that drew the blur at the square root of the fade, they
+  still overlapped at up to 34%. With 0018 and 0019 the sharp window was gone
+  before the bar appeared, and the bar was gone before the window came back.
+  This held when the layer closed while it was still fading in, and the fade
+  had no jump there.
+- 0018 and 0019 on the live session at 120 fps: a media panel over a
+  browser, a calendar panel and a full-screen launcher. The sharp windows
+  behind cleared in about 60 ms, then the content faded in over about 120 ms,
+  and closing ran the other way. The sharp window and the panel content
+  never showed together above 5%, where the earlier 0019 reached about 40%.
+- Layer popups with blur fade in staged with their layer, but a popup that
+  closes on its own still fades out with its blur at the square root of its
+  fade.
 
 ## References and diagnostics
 

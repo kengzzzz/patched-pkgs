@@ -1,0 +1,18 @@
+diff --git a/src/desktop/state/LayerFadeout.cpp b/src/desktop/state/LayerFadeout.cpp
+index 3fc4f21..2fcd0d1 100644
+--- a/src/desktop/state/LayerFadeout.cpp
++++ b/src/desktop/state/LayerFadeout.cpp
+@@ -64,8 +64,12 @@ SP<CLayerFadeout> CLayerFadeout::create(PHLLS layer, SP<Render::IFramebuffer> sn
+         fadeout->m_effects.dimAroundAlpha = *PDIMAROUND;
+ 
+     fadeout->m_effects.textureBlur.enabled = shouldBlurLayer(layer);
+-    if (fadeout->m_effects.textureBlur.enabled)
++    if (fadeout->m_effects.textureBlur.enabled) {
+         fadeout->m_effects.textureBlur.ignoreAlpha = layer->m_ruleApplicator->ignoreAlpha().valueOr(0.01F);
++        // The snapshot has no layer, so without this it would follow the global xray setting. Blur it the way the mapped layer was blurred.
++        fadeout->m_effects.textureBlur.blockBlurOptimization = layer->m_layer == ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND || layer->m_layer == ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM ||
++            !layer->m_ruleApplicator->xray().valueOrDefault();
++    }
+ 
+     switch (layer->m_layer) {
+         case ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND: fadeout->m_plane = FADEOUT_PLANE_LAYER_BACKGROUND; break;

@@ -1,0 +1,153 @@
+diff --git a/src/desktop/state/Fadeout.hpp b/src/desktop/state/Fadeout.hpp
+index 2144cf9..796d6ab 100644
+--- a/src/desktop/state/Fadeout.hpp
++++ b/src/desktop/state/Fadeout.hpp
+@@ -54,12 +54,14 @@ namespace Desktop {
+         bool                 forceBlend = false;
+         std::optional<float> ignoreAlpha;
+         std::optional<bool>  blockBlurOptimization;
++        std::optional<float> strength;
+     };
+ 
+     struct SFadeoutRenderEffects {
+         float                          dimAroundAlpha = 0.F;
+         std::optional<SFadeoutPreBlur> preBlur;
+         SFadeoutTextureBlur            textureBlur;
++        std::optional<float>           textureAlpha;
+     };
+ 
+     class IFadeout : public virtual View::CGeometricAnimated {
+diff --git a/src/desktop/state/LayerFadeout.cpp b/src/desktop/state/LayerFadeout.cpp
+index 2fcd0d1..07001b4 100644
+--- a/src/desktop/state/LayerFadeout.cpp
++++ b/src/desktop/state/LayerFadeout.cpp
+@@ -146,8 +146,11 @@ SFadeoutRenderEffects CLayerFadeout::effects() const {
+     auto effects = m_effects;
+     effects.dimAroundAlpha *= alpha();
+ 
+-    if (effects.textureBlur.enabled)
+-        effects.textureBlur.alpha = std::sqrt(std::max(alpha(), 0.F));
++    if (effects.textureBlur.enabled) {
++        effects.textureAlpha         = layerFadeContentAlpha(alpha());
++        effects.textureBlur.alpha    = layerFadeBlurAlpha(alpha());
++        effects.textureBlur.strength = effects.textureBlur.alpha;
++    }
+ 
+     return effects;
+ }
+diff --git a/src/desktop/state/LayerFadeout.hpp b/src/desktop/state/LayerFadeout.hpp
+index 50fb6d1..173a8ef 100644
+--- a/src/desktop/state/LayerFadeout.hpp
++++ b/src/desktop/state/LayerFadeout.hpp
+@@ -2,7 +2,18 @@
+ 
+ #include "Fadeout.hpp"
+ 
++#include <algorithm>
++
+ namespace Desktop {
++    // A blurred layer fades its blur over the first half of its fade and its pixels over the second half, so its content never shows over a sharp background.
++    inline float layerFadeBlurAlpha(float fade) {
++        return std::clamp(fade * 2.F, 0.F, 1.F);
++    }
++
++    inline float layerFadeContentAlpha(float fade) {
++        return std::clamp((fade * 2.F) - 1.F, 0.F, 1.F);
++    }
++
+     class CLayerFadeout final : public IFadeout {
+       public:
+         static SP<CLayerFadeout>      create(PHLLS layer, SP<Render::IFramebuffer> snapshot, float sourceAlpha);
+diff --git a/src/render/ElementRenderer.cpp b/src/render/ElementRenderer.cpp
+index e6ffe0f..7051215 100644
+--- a/src/render/ElementRenderer.cpp
++++ b/src/render/ElementRenderer.cpp
+@@ -5,6 +5,7 @@
+ #include "../desktop/view/window/Window.hpp"
+ #include "../desktop/view/window/WindowEffectsController.hpp"
+ #include "../desktop/view/window/WindowPresentation.hpp"
++#include "../desktop/state/LayerFadeout.hpp"
+ #include "render/pass/ClearPassElement.hpp"
+ #include "render/transformer/TransformerList.hpp"
+ #include <hyprutils/memory/SharedPtr.hpp>
+@@ -257,7 +258,11 @@ void IElementRenderer::drawSurface(CRenderContext& ctx, WP<CSurfacePassElement>
+ 
+     auto        PSURFACE = Desktop::View::CWLSurface::fromResource(m_data.surface);
+ 
+-    const float ALPHA         = m_data.alpha * m_data.fadeAlpha * (PSURFACE ? PSURFACE->m_alphaModifier : 1.F);
++    const bool  STAGEDFADE    = m_data.pLS && m_data.blur;
++    const float FADEALPHA     = STAGEDFADE ? Desktop::layerFadeContentAlpha(m_data.fadeAlpha) : m_data.fadeAlpha;
++    const float BLURALPHA     = STAGEDFADE ? Desktop::layerFadeBlurAlpha(m_data.fadeAlpha) : m_data.fadeAlpha;
++    const auto  BLURSTRENGTH  = STAGEDFADE ? std::optional<float>{BLURALPHA} : std::nullopt;
++    const float ALPHA         = m_data.alpha * FADEALPHA * (PSURFACE ? PSURFACE->m_alphaModifier : 1.F);
+     const float OVERALL_ALPHA = PSURFACE ? PSURFACE->m_overallOpacity : 1.F;
+     const bool  BLUR          = m_data.blur && (!TEXTURE->m_opaque || ALPHA < 1.F || OVERALL_ALPHA < 1.F);
+ 
+@@ -340,7 +345,8 @@ void IElementRenderer::drawSurface(CRenderContext& ctx, WP<CSurfacePassElement>
+                             .tex                   = TEXTURE,
+                             .box                   = windowBox,
+                             .a                     = ALPHA,
+-                            .blurA                 = m_data.fadeAlpha,
++                            .blurA                 = BLURALPHA,
++                            .blurStrength          = BLURSTRENGTH,
+                             .overallA              = OVERALL_ALPHA,
+                             .round                 = rounding,
+                             .roundingPower         = roundingPower,
+@@ -387,7 +393,8 @@ void IElementRenderer::drawSurface(CRenderContext& ctx, WP<CSurfacePassElement>
+                             .tex                   = TEXTURE,
+                             .box                   = windowBox,
+                             .a                     = ALPHA,
+-                            .blurA                 = m_data.fadeAlpha,
++                            .blurA                 = BLURALPHA,
++                            .blurStrength          = BLURSTRENGTH,
+                             .overallA              = OVERALL_ALPHA,
+                             .round                 = rounding,
+                             .roundingPower         = roundingPower,
+@@ -529,7 +536,7 @@ void IElementRenderer::drawTex(CRenderContext& ctx, WP<CTexPassElement> element,
+                     };
+             }
+             blurredFB = g_pHyprRenderer->blurMainFramebuffer(
+-                ctx, element->m_data.a, inverseOpaque,
++                ctx, element->m_data.blurStrength.value_or(element->m_data.a), inverseOpaque,
+                 {.patternBox = patternBox, .owner = element->m_data.blurOwner, .shape = shape, .workspacePresentation = element->m_data.workspacePresentation});
+             element->m_data.blurredBG = blurredFB ? blurredFB->getTexture() : nullptr;
+         } else
+diff --git a/src/render/Renderer.cpp b/src/render/Renderer.cpp
+index b9a3797..18e044e 100644
+--- a/src/render/Renderer.cpp
++++ b/src/render/Renderer.cpp
+@@ -1043,7 +1043,8 @@ void IHyprRenderer::renderLayer(CRenderContext& ctx, PHLLS pLayer, PHLMONITOR pM
+     const auto                       REALSIZ = pLayer->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+ 
+     CSurfacePassElement::SRenderData renderdata = {pMonitor, time, REALPOS};
+-    renderdata.fadeAlpha                        = pLayer->alpha()[LS_ALPHA_FADE]->value();
++    // The fadeout applies the fade to the snapshot, so the snapshot holds the layer unfaded.
++    renderdata.fadeAlpha                        = ctx.m_renderingSnapshot ? 1.F : pLayer->alpha()[LS_ALPHA_FADE]->value();
+     renderdata.blur                             = !ctx.m_renderingSnapshot && pLayer->shouldBlur();
+     renderdata.surface                          = pLayer->wlSurface()->resource();
+     renderdata.decorate                         = false;
+@@ -3681,10 +3682,11 @@ void IHyprRenderer::renderFadeouts(CRenderContext& ctx, PHLMONITOR monitor, Desk
+         CTexPassElement::SRenderData data;
+         data.tex                   = FB->getTexture();
+         data.box                   = fadeout->renderBox();
+-        data.a                     = fadeout->alpha();
++        data.a                     = EFFECTS.textureAlpha.value_or(fadeout->alpha());
+         data.damage                = fakeDamage;
+         data.blur                  = EFFECTS.textureBlur.enabled;
+         data.blurA                 = EFFECTS.textureBlur.alpha;
++        data.blurStrength          = EFFECTS.textureBlur.strength;
+         data.forceBlurBlend        = EFFECTS.textureBlur.forceBlend;
+         data.blurShapeInvalid      = true;
+         data.ignoreAlpha           = EFFECTS.textureBlur.ignoreAlpha;
+diff --git a/src/render/pass/TexPassElement.hpp b/src/render/pass/TexPassElement.hpp
+index 15f3946..a3f7539 100644
+--- a/src/render/pass/TexPassElement.hpp
++++ b/src/render/pass/TexPassElement.hpp
+@@ -38,6 +38,7 @@ class CTexPassElement : public IPassElement {
+         CBox                              box;
+         float                             a        = 1.F;
+         float                             blurA    = 1.F;
++        std::optional<float>              blurStrength;
+         float                             overallA = 1.F;
+         CRegion                           damage;
+         bool                              useProvidedDamage = false;
