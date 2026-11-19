@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 env:
-  PACKAGES: aquamarine egl-wayland2 hyprland freerdp
+  PACKAGES: aquamarine egl-wayland2 hyprland freerdp btop
 
 defaults:
   run:

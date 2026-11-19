@@ -66,12 +66,12 @@ packages run only on Zen 5. On another CPU, makepkg skips `check()`.
 
 ## Releases
 
-`.github/workflows/release.yml` builds aquamarine, egl-wayland2, hyprland and
-freerdp after a push to main or by hand. It builds a package only when no
-release `<package>-<PKGVER>-<PKGREL>` exists, and never replaces a release.
-Each release has a `.tar` with `package.env` and `dist/<PKGVER>-<PKGREL>/`,
-and its `.sha256`. Check `ABI_PACKAGES` and dependencies on the system that
-installs it.
+`.github/workflows/release.yml` builds aquamarine, egl-wayland2, hyprland,
+freerdp and btop after a push to main or by hand. It builds a package only
+when no release `<package>-<PKGVER>-<PKGREL>` exists, and never replaces a
+release. Each release has a `.tar` with `package.env` and
+`dist/<PKGVER>-<PKGREL>/`, and its `.sha256`. Check `ABI_PACKAGES` and
+dependencies on the system that installs it.
 
 `.github/workflows/drift.yml` runs daily. It fails when a release no longer
 fits the CachyOS znver4 and Arch repositories. Update `package.env`, bump

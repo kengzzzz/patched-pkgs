@@ -20,7 +20,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  PACKAGES: aquamarine egl-wayland2 hyprland freerdp
+  PACKAGES: aquamarine egl-wayland2 hyprland freerdp btop
 
 jobs:
   plan:
