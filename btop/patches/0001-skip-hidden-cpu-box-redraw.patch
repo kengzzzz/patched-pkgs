@@ -1,0 +1,14 @@
+diff --git a/src/btop_input.cpp b/src/btop_input.cpp
+index 4c77b71..fdf1360 100644
+--- a/src/btop_input.cpp
++++ b/src/btop_input.cpp
+@@ -533,7 +533,8 @@ namespace Input {
+ 
+ 				if (not keep_going) {
+ 					Runner::run("proc", no_update, redraw);
+-					Runner::run("cpu", no_update, redraw);
++					if (Cpu::shown)
++						Runner::run("cpu", no_update, redraw);
+ 					return;
+ 				}
+ 			}

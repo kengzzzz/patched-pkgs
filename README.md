@@ -12,6 +12,7 @@ installs a package or changes the running system.
 | [egl-wayland2](egl-wayland2/README.md) | `wl_buffer.release` leak with explicit sync |
 | [qt6-declarative](qt6-declarative/README.md) | Out-of-date swapchain in the threaded render loop, Arch's backports |
 | [freerdp](freerdp/README.md) | No blocking security key box in SDL3, no FIDO2 PIN when UV is not required |
+| [btop](btop/README.md) | Crash and blank screen with the CPU box hidden, extra CPU samples on process keys |
 
 ## Layout
 
@@ -108,6 +109,6 @@ restore the older version from git, bump `PKGREL` and build again.
 
 The build script, Dockerfiles and docs are under [0BSD](LICENSE). Each patch
 follows its upstream license: Hyprland and aquamarine BSD-3-Clause, quickshell
-LGPL-3.0-only, egl-wayland2 and FreeRDP Apache-2.0, Qt Declarative
+LGPL-3.0-only, egl-wayland2, FreeRDP and btop Apache-2.0, Qt Declarative
 LGPL-3.0-only, GPL-2.0-only or GPL-3.0-only. The PKGBUILDs are adapted from
 Arch Linux packaging, 0BSD.
