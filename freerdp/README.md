@@ -1,6 +1,6 @@
 # freerdp
 
-FreeRDP 3.33.1 built like Arch's `2:3.33.1-1`, with two patches for WebAuthn
+FreeRDP 3.33.1 built like Arch's `2:3.33.1-2`, with two patches for WebAuthn
 redirection.
 
 ## 0001: no blocking "Touch the security key" box in the SDL3 client
